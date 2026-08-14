@@ -1,0 +1,13 @@
+# Compiled binaries
+/bin/
+
+# Claude Code local session config/permissions (not part of the project)
+/.claude/
+
+# Go
+*.test
+*.out
+
+# OS/editor cruft
+.DS_Store
+Thumbs.db
