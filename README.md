@@ -1,59 +1,60 @@
-# kbs — reverse KVM
+# ea-share — reverse KVM
 
-Compartilhamento de teclado/mouse "ao contrário": em vez da máquina que
-hospeda o teclado físico atuar como servidor (Synergy/Barrier), aqui é quem
-**conecta** que compartilha o teclado/mouse.
+Keyboard/mouse sharing "in reverse": instead of the machine hosting the
+physical keyboard acting as the server (Synergy/Barrier), here it's
+whichever machine **connects** that shares its keyboard/mouse.
 
-- **`target`** — a máquina que é controlada. Fica escutando, aceita uma
-  conexão autenticada e injeta os eventos recebidos localmente.
-- **`controller`** — a máquina controladora. Conecta no `target`, captura o
-  teclado/mouse *local* e envia os eventos pela rede.
-- **`tray`** — ícone na bandeja do Windows pra iniciar `target`/`controller`
-  a partir de perfis salvos, sem precisar de terminal (veja
-  [Ícone na bandeja (`tray`)](#ícone-na-bandeja-tray)).
+- **`target`** — the machine being controlled. Listens, accepts an
+  authenticated connection, and injects the events it receives locally.
+- **`controller`** — the controlling machine. Connects to the `target`,
+  captures the *local* keyboard/mouse, and sends the events over the
+  network.
+- **`tray`** — a Windows system-tray icon to start `target`/`controller`
+  from saved profiles, no terminal needed (see
+  [System tray icon (`tray`)](#system-tray-icon-tray)).
 
-## Uso responsável
+## Responsible use
 
-Isso é uma ferramenta de acesso remoto — use só entre máquinas suas (ou com
-autorização explícita do dono), do mesmo jeito que usaria SSH, TeamViewer ou
-Synergy. Quem tiver o token consegue digitar e clicar na máquina `target`
-sem mais nenhuma confirmação; trate-o como uma senha. Veja
-[Modelo de segurança](#modelo-de-segurança) antes de expor isso numa rede
-que não controla.
+This is a remote-access tool — use it only between machines you own (or
+with the explicit authorization of the owner), the same way you'd use
+SSH, TeamViewer, or Synergy. Whoever holds the token can type and click on
+the `target` machine with no further confirmation; treat it like a
+password. See [Security model](#security-model) before exposing this on a
+network you don't control.
 
 ## Build
 
 ```sh
 go build -o bin/target.exe ./cmd/target        # Windows
 go build -o bin/controller.exe ./cmd/controller
-go build -ldflags "-H=windowsgui" -o bin/tray.exe ./cmd/tray   # sem console ao abrir
+go build -ldflags "-H=windowsgui" -o bin/tray.exe ./cmd/tray   # no console on launch
 
-GOOS=linux GOARCH=amd64 go build -o bin/target ./cmd/target   # cross-compile p/ Linux
+GOOS=linux GOARCH=amd64 go build -o bin/target ./cmd/target   # cross-compile for Linux
 GOOS=linux GOARCH=amd64 go build -o bin/controller ./cmd/controller
 ```
 
-Ou use `scripts/build.sh` (funciona rodando de Windows via Git Bash ou de
-Linux/CI — veja [`scripts/build.sh`](scripts/build.sh)):
+Or use `scripts/build.sh` (works run from Windows via Git Bash or from
+Linux/CI — see [`scripts/build.sh`](scripts/build.sh)):
 
 ```sh
 ./scripts/build.sh              # target/controller (windows+linux) + tray (windows)
-./scripts/build.sh --suffix 2   # gera target2.exe/controller2.exe/tray2.exe, sem sobrescrever um build já em uso
+./scripts/build.sh --suffix 2   # produces target2.exe/controller2.exe/tray2.exe, without overwriting a build already in use
 ```
 
-Nenhuma dependência usa CGO — não precisa de gcc/mingw instalado para
-compilar para Windows ou Linux, nem para cross-compilar de um SO pro outro.
-macOS **não é suportado ainda** (veja [Limitações](#limitações-conhecidas)).
+No dependency uses CGO — no gcc/mingw toolchain needed to build for
+Windows or Linux, nor to cross-compile from one OS to the other. macOS is
+**not supported yet** (see [Known limitations](#known-limitations)).
 
-## Uso
+## Usage
 
-Na máquina que vai ser controlada (`target`):
+On the machine that will be controlled (`target`):
 
 ```sh
 ./target -listen :7777
 ```
 
-Ele gera (na primeira execução) um certificado autoassinado e, se você não
-passar `-token`, um token aleatório — ambos são impressos no terminal:
+On first run it generates a self-signed certificate and, if you don't
+pass `-token`, a random token — both are printed to the terminal:
 
 ```
 No -token given; generated one for this session:
@@ -63,189 +64,196 @@ Certificate fingerprint (verify this matches on the controller):
   D4:83:C3:D3:DB:17:4A:57:...
 ```
 
-Na máquina controladora (`controller`), copiando o token mostrado acima:
+On the controlling machine (`controller`), copying the token printed
+above:
 
 ```sh
 ./controller -connect 192.168.1.50:7777 -token 4fa94c92cf6e96a878652410cb58fdb2b769beb7b88ac859
 ```
 
-Na primeira conexão a um `target` desconhecido, o `controller` mostra o
-fingerprint do certificado e pede confirmação (como o `known_hosts` do SSH)
-antes de confiar nele. Depois disso, esse fingerprint fica salvo e é
-conferido automaticamente em toda reconexão — se mudar, a conexão é
-recusada (proteção contra man-in-the-middle).
+On the first connection to an unknown `target`, the `controller` shows
+the certificate fingerprint and asks for confirmation (like SSH's
+`known_hosts`) before trusting it. After that, the fingerprint is saved
+and checked automatically on every reconnection — if it changes, the
+connection is refused (protection against man-in-the-middle attacks).
 
-Sem `-edge`, teclado e mouse do `controller` passam a ser refletidos
-*sempre* no `target` (modo antigo, "sempre compartilha"). `Ctrl+C` encerra
-dos dois lados.
+Without `-edge`, the `controller`'s keyboard and mouse are reflected
+*continuously* on the `target` (legacy "always share" mode). `Ctrl+C`
+shuts down both sides.
 
-### Troca por borda de tela (`-edge`)
+### Edge-triggered switching (`-edge`)
 
-Com `-edge left|right|top|bottom`, o `controller` se comporta como o
-Synergy/Barrier: o teclado/mouse local funciona normalmente até o cursor
-encostar na borda configurada da tela — a partir daí ele passa a ser
-capturado e encaminhado pro `target`, com o cursor "entrando" pela borda
-oposta de lá. Empurrar de volta pela mesma borda devolve o controle local.
+With `-edge left|right|top|bottom`, the `controller` behaves like
+Synergy/Barrier: the local keyboard/mouse work normally until the cursor
+touches the configured screen edge — from there it starts being captured
+and forwarded to the `target`, with the cursor "entering" from the
+opposite edge over there. Pushing back through the same edge returns
+control locally.
 
 ```sh
-./controller -connect 192.168.1.50:7777 -token ... -edge right   # target fica à direita, no mundo físico
+./controller -connect 192.168.1.50:7777 -token ... -edge right   # target sits to the right, physically
 ```
 
-`-edge` é o lado da tela **onde o target fica**, do ponto de vista de quem
-está sentado no `controller`.
+`-edge` is the side of the screen **where the target sits**, from the
+point of view of whoever's sitting at the `controller`.
 
-### Clipboard compartilhado (`Ctrl+Alt+V`)
+### Shared clipboard (`Ctrl+Alt+V`)
 
-Com `-edge` ativo, `Ctrl+Alt+V` transfere o clipboard (texto ou imagem, ex.
-print de tela) entre as duas máquinas — a direção é decidida automaticamente
-pelo estado atual:
+With `-edge` active, `Ctrl+Alt+V` transfers the clipboard (text or image,
+e.g. a screenshot) between the two machines — the direction is decided
+automatically from the current state:
 
-- **Controlando o target** (engaged) → `Ctrl+Alt+V` empurra o clipboard do
-  `controller` pro `target` e cola lá.
-- **Controle local** (disengaged) → `Ctrl+Alt+V` busca o clipboard do
-  `target` e cola aqui no `controller`.
+- **Controlling the target** (engaged) → `Ctrl+Alt+V` pushes the
+  `controller`'s clipboard to the `target` and pastes it there.
+- **Local control** (disengaged) → `Ctrl+Alt+V` fetches the `target`'s
+  clipboard and pastes it here on the `controller`.
 
-`Ctrl+C`/`Ctrl+V` comuns continuam funcionando normalmente em cada máquina
-(a tecla é só encaminhada como qualquer outra) — o atalho especial só troca
-o *conteúdo do clipboard* entre as duas pontas antes de colar. Usa uma
-conexão TCP separada da de mouse/teclado (uma porta acima), então um print
-de tela grande nunca atrasa o movimento do mouse.
+Regular `Ctrl+C`/`Ctrl+V` keep working normally on each machine (the key
+is just forwarded like any other) — the special hotkey only swaps the
+*clipboard content* between the two ends right before pasting. It uses a
+TCP connection separate from the mouse/keyboard one (one port up), so a
+large screenshot never delays mouse movement.
 
-### Flags principais
+### Main flags
 
-| Flag (target) | Descrição |
+| Flag (target) | Description |
 |---|---|
-| `-listen` | endereço:porta para escutar (padrão `:7777`) |
-| `-token` | segredo compartilhado (ou env `KBS_TOKEN`); gerado se vazio |
-| `-data-dir` | onde guardar o certificado TLS |
-| `-verbose` | loga periodicamente quantos eventos de cada tipo foram recebidos |
+| `-listen` | address:port to listen on (default `:7777`) |
+| `-token` | shared secret (or env `KBS_TOKEN`); generated if empty |
+| `-data-dir` | where to store the TLS certificate |
+| `-verbose` | periodically logs how many events of each kind were received |
 
-| Flag (controller) | Descrição |
+| Flag (controller) | Description |
 |---|---|
-| `-connect` | `host:porta` do target (obrigatório) |
-| `-token` | segredo compartilhado (ou env `KBS_TOKEN`) |
-| `-edge` | `left\|right\|top\|bottom`: ativa troca por borda + clipboard; sem isso, compartilha sempre (modo antigo) |
-| `-fingerprint` | fixa o fingerprint esperado do target, pulando o prompt |
-| `-yes` | confia automaticamente num target desconhecido, sem perguntar |
-| `-known-hosts` | caminho do arquivo de fingerprints confiados |
+| `-connect` | `host:port` of the target (required) |
+| `-token` | shared secret (or env `KBS_TOKEN`) |
+| `-edge` | `left\|right\|top\|bottom`: enables edge switching + clipboard; without it, always shares (legacy mode) |
+| `-fingerprint` | pins the expected target fingerprint, skipping the prompt |
+| `-yes` | automatically trusts an unknown target, without asking |
+| `-known-hosts` | path to the trusted-fingerprints file |
 
-## Modelo de segurança
+## Security model
 
-- A conexão é sempre TLS. Como não há uma CA, a confiança é por
-  **fingerprint pinning** (trust-on-first-use), igual ao SSH — não por uma
-  cadeia de certificado validada. O canal de clipboard (quando `-edge` está
-  ativo) é uma segunda conexão TLS pro mesmo destino, com o fingerprint já
-  confiado na primeira — não é uma decisão de confiança separada.
-- Depois do handshake TLS, o `controller` precisa enviar o **token**
-  correto antes do `target` aceitar qualquer evento de input. Comparação é
-  em tempo constante.
-- O `target` só aceita **um controlador por vez**; conexões extras são
-  recusadas enquanto uma já está ativa.
-- **Trate o token como uma senha root**: quem o tiver pode digitar e
-  clicar remotamente na máquina `target` sem mais nenhuma confirmação.
-  Não hardcode o token em scripts compartilhados; prefira passá-lo via
-  `KBS_TOKEN` no ambiente.
-- Em rede não confiável (internet aberta), rode isso atrás de uma VPN
-  (WireGuard/Tailscale) em vez de expor a porta diretamente.
+- The connection is always TLS. Since there's no CA, trust is by
+  **fingerprint pinning** (trust-on-first-use), like SSH — not by a
+  validated certificate chain. The clipboard channel (when `-edge` is
+  active) is a second TLS connection to the same destination, with the
+  fingerprint already trusted from the first one — not a separate trust
+  decision.
+- After the TLS handshake, the `controller` must send the correct
+  **token** before the `target` accepts any input event. The comparison
+  is constant-time.
+- The `target` only accepts **one controller at a time**; extra
+  connections are refused while one is already active.
+- **Treat the token like a root password**: whoever has it can type and
+  click remotely on the `target` machine with no further confirmation.
+  Don't hardcode the token in shared scripts; prefer passing it via
+  `KBS_TOKEN` in the environment.
+- On an untrusted network (open internet), run this behind a VPN
+  (WireGuard/Tailscale) instead of exposing the port directly.
 
-## Permissões necessárias
+## Required permissions
 
-- **Windows**: nenhuma permissão especial para captura/injeção via
-  `SetWindowsHookExW`/`SendInput` em uso normal. Ver
-  [Limitações](#limitações-conhecidas) sobre janelas/processos elevados
-  (ex. antivírus) — nesse caso rodar como Administrador ajuda em parte.
+- **Windows**: no special permission for capture/injection via
+  `SetWindowsHookExW`/`SendInput` under normal use. See
+  [Known limitations](#known-limitations) about elevated
+  windows/processes (e.g. antivirus) — running as Administrator helps
+  partially in that case.
 - **Linux**:
-  - `controller` (captura): precisa ler `/dev/input/event*`, o que
-    normalmente exige root ou fazer parte do grupo `input`
-    (`sudo usermod -aG input $USER`, depois reabrir a sessão).
-  - `target` (injeção): precisa de acesso a `/dev/uinput`
-    (`sudo modprobe uinput`; regra `udev` ou grupo `uinput`/`input`
-    conforme a distro).
-  - `-edge` e o clipboard compartilhado ainda não têm implementação no
-    Linux (ver [Limitações](#limitações-conhecidas)).
+  - `controller` (capture): needs to read `/dev/input/event*`, which
+    normally requires root or being part of the `input` group
+    (`sudo usermod -aG input $USER`, then re-open the session).
+  - `target` (injection): needs access to `/dev/uinput`
+    (`sudo modprobe uinput`; a `udev` rule or `uinput`/`input` group
+    depending on the distro).
+  - `-edge` and the shared clipboard aren't implemented on Linux yet
+    (see [Known limitations](#known-limitations)).
 
-## Ícone na bandeja (`tray`)
+## System tray icon (`tray`)
 
-`tray.exe` é um jeito gráfico de usar o `target`/`controller` sem abrir
-terminal: um ícone fica na bandeja do Windows (perto do relógio) com um
-menu pra iniciar/parar cada um a partir de **perfis salvos**.
+`tray.exe` is a graphical way to use `target`/`controller` without
+opening a terminal: an icon sits in the Windows system tray (near the
+clock) with a menu to start/stop each one from **saved profiles**.
 
-- Na primeira execução, `tray.exe` cria
-  `%AppData%\kbs\tray_profiles.json` com um perfil de exemplo de cada tipo.
-  Edite esse arquivo (menu **Editar perfis (notepad)**, depois **Recarregar
-  perfis**) pra adicionar as suas máquinas: `name`, `listen`/`token` pros
-  targets; `name`, `connect`/`token`/`edge` pros controllers (`edge` vazio
-  = modo antigo, sempre compartilha, sem troca por borda).
-- **Ouvir como target** / **Conectar em** no menu iniciam o processo
-  correspondente (escondido, sem janela de console) usando `target.exe` /
-  `controller.exe` — que precisam estar **na mesma pasta** que `tray.exe`.
-- **Parar target** / **Parar controller** encerram o processo em execução.
-- **Copiar token do target** copia pra área de transferência (pra colar na
-  hora de criar o perfil do controller na outra máquina).
-- Conexões feitas pelo `tray` confiam automaticamente no certificado de um
-  target desconhecido na primeira vez (equivalente a `-yes`, já que não há
-  terminal pra confirmar o fingerprint) — depois disso o fingerprint fica
-  fixado normalmente, então uma reinstalação do target ou um MITM real
-  ainda derruba a conexão.
-- Log de diagnóstico (saída de cada `target`/`controller` iniciado pelo
-  tray) fica em `%AppData%\kbs\tray.log`.
+- On first run, `tray.exe` creates `%AppData%\kbs\tray_profiles.json`
+  with one example profile of each kind. Edit that file (**Edit profiles
+  (notepad)** menu, then **Reload profiles**) to add your own machines:
+  `name`, `listen`/`token` for targets; `name`, `connect`/`token`/`edge`
+  for controllers (empty `edge` = legacy mode, always share, no edge
+  switching).
+- **Listen as target** / **Connect to** in the menu start the
+  corresponding process (hidden, no console window) using `target.exe` /
+  `controller.exe` — which need to be **in the same folder** as
+  `tray.exe`.
+- **Stop target** / **Stop controller** end the running process.
+- **Copy target token** copies it to the clipboard (to paste when
+  creating the controller's profile on the other machine).
+- Connections made by `tray` automatically trust an unknown target's
+  certificate on first connect (equivalent to `-yes`, since there's no
+  terminal to confirm the fingerprint) — after that the fingerprint is
+  pinned normally, so a target reinstall or a real MITM still breaks the
+  connection.
+- Diagnostic log (the output of every `target`/`controller` started by
+  the tray) lives at `%AppData%\kbs\tray.log`.
 
-## Limitações conhecidas
+## Known limitations
 
-- **macOS não implementado.** Captura/injeção no macOS exigem CGO
-  (Quartz `CGEventTap`/`CGEventPost`), fora do escopo desta primeira
-  versão que roda sem toolchain C.
-- **`-edge` e clipboard compartilhado são Windows-only.** No Linux, o
-  `controller`/`target` funcionam só no modo antigo (sempre compartilha).
-- **Só um sentido por vez.** O `target` também não devolve o teclado/mouse
-  dele para o `controller` — a ideia é dar suporte aos dois sentidos depois.
-- **Sem bloqueio do input local do alvo.** Enquanto controlado, o `target`
-  continua respondendo ao teclado/mouse físico dele também (podem colidir).
-- **Layout de teclado**: o conjunto de teclas mapeado cobre letras,
-  números, função (F1-F12), navegação, modificadores e pontuação comum de
-  layout US. Teclas de acentuação/idiomas específicos (ç, á, teclas mortas
-  etc.) não têm mapeamento ainda.
-- Sem suporte a arrastar-arquivos ou múltiplos monitores/displays — é só
-  teclado, mouse (movimento relativo, botões e scroll vertical) e o
-  clipboard (texto/imagem) descrito acima.
-- **Janelas/processos elevados no Windows (ex. ícone de antivírus na
-  bandeja) podem não responder ao input injetado.** É uma proteção do
-  próprio Windows (UIPI) contra input sintético de um processo com
-  privilégio menor afetando um com privilégio maior — a mesma limitação
-  existe em Synergy, Barrier e no Mouse Without Borders da Microsoft.
-  Rodar `target`/`tray` como Administrador resolve pra janelas elevadas
-  comuns (UAC); softwares de segurança que rodam num nível ainda mais alto
-  (perto de SYSTEM) podem continuar imunes de propósito. Ver
-  [`docs/known-issues.md`](docs/known-issues.md).
+- **macOS not implemented.** Capture/injection on macOS require CGO
+  (Quartz `CGEventTap`/`CGEventPost`), out of scope for this first
+  version, which builds without a C toolchain.
+- **`-edge` and the shared clipboard are Windows-only.** On Linux,
+  `controller`/`target` only work in legacy mode (always share).
+- **One direction at a time.** The `target` doesn't send its own
+  keyboard/mouse back to the `controller` either — bidirectional support
+  is a possible future addition.
+- **No local input blocking on the target.** While being controlled, the
+  `target` still responds to its own physical keyboard/mouse too (they
+  can collide).
+- **Keyboard layout**: the mapped key set covers letters, numbers,
+  function keys (F1-F12), navigation, modifiers, and common US-layout
+  punctuation. Accent/language-specific keys (ç, á, dead keys, etc.)
+  aren't mapped yet.
+- No support for drag-and-drop file transfer or multiple
+  monitors/displays — it's just keyboard, mouse (relative movement,
+  buttons, and vertical scroll), and the clipboard (text/image) described
+  above.
+- **Elevated windows/processes on Windows (e.g. an antivirus's tray icon)
+  may not respond to injected input.** This is a Windows protection
+  (UIPI) against synthetic input from a lower-privilege process affecting
+  a higher-privilege one — the same limitation exists in Synergy, Barrier,
+  and Microsoft's Mouse Without Borders. Running `target`/`tray` as
+  Administrator fixes it for common elevated windows (UAC); security
+  software running at an even higher level (close to SYSTEM) may remain
+  immune by design. See [`docs/known-issues.md`](docs/known-issues.md).
 
-## Estrutura
+## Structure
 
 ```
-cmd/target/            binário que recebe conexão e injeta eventos
-cmd/controller/        binário que conecta e captura eventos locais
-cmd/tray/               ícone na bandeja do Windows (perfis salvos, sem terminal)
-internal/protocol/     formato das mensagens de mouse/teclado na rede
-internal/clipsync/      formato + conexão dedicada do clipboard compartilhado
-internal/keys/          nomes de tecla independentes de SO + mapeamentos
-internal/capture/       captura de input (Windows/Linux/darwin-stub)
-internal/inject/        injeção de input (Windows/Linux/darwin-stub)
-internal/clipboard/      leitura/escrita do clipboard do Windows (texto+imagem)
-internal/tlsutil/        certificado autoassinado + trust-on-first-use
-internal/auth/           checagem do token em tempo constante
-docs/                    detalhes de arquitetura, bugs conhecidos e testes
-scripts/build.sh          script de build multiplataforma
+cmd/target/            binary that accepts a connection and injects events
+cmd/controller/        binary that connects and captures local events
+cmd/tray/               Windows system tray icon (saved profiles, no terminal)
+internal/protocol/     mouse/keyboard wire message format
+internal/clipsync/      shared-clipboard wire format + dedicated connection
+internal/keys/          OS-independent key names + mappings
+internal/capture/       input capture (Windows/Linux/darwin-stub)
+internal/inject/        input injection (Windows/Linux/darwin-stub)
+internal/clipboard/      Windows clipboard read/write (text+image)
+internal/tlsutil/        self-signed certificate + trust-on-first-use
+internal/auth/           constant-time token check
+docs/                    architecture, known-issue, and testing details
+scripts/build.sh          cross-platform build script
 ```
 
-## Desenvolvimento
+## Development
 
-- [`ai-context.md`](ai-context.md) — ponto de entrada pra quem (ou qual IA)
-  for mexer no projeto no dia a dia.
-- [`docs/architecture.md`](docs/architecture.md) — como as peças se
-  encaixam.
-- [`docs/known-issues.md`](docs/known-issues.md) — bugs não óbvios já
-  encontrados e por quê, pra não redescobrir do zero.
-- [`docs/testing.md`](docs/testing.md) — o que tem teste automatizado, o
-  que não tem (e por quê), como rodar.
+- [`ai-context.md`](ai-context.md) — entry point for anyone (or any AI)
+  working on the project day to day.
+- [`docs/architecture.md`](docs/architecture.md) — how the pieces fit
+  together.
+- [`docs/known-issues.md`](docs/known-issues.md) — non-obvious bugs
+  already found and why, so they don't get rediscovered from scratch.
+- [`docs/testing.md`](docs/testing.md) — what has automated test
+  coverage, what doesn't (and why), how to run it.
 
 ## License
 

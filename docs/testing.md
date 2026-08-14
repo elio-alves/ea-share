@@ -1,74 +1,75 @@
-# Testes
+# Testing
 
-## Rodando
+## Running
 
 ```sh
 go test ./...
 ```
 
-Roda em qualquer SO (Linux, Windows) — os pacotes com teste automatizado
-hoje não dependem de nenhuma API específica de plataforma. Um CI em Linux
-consegue rodar a suíte inteira normalmente, mesmo sem conseguir *compilar*
-os arquivos `_windows.go` (que ficam de fora do build no Linux por
-`//go:build windows` — ver abaixo).
+Runs on any OS (Linux, Windows) — the packages with automated tests today
+don't depend on any platform-specific API. A Linux CI can run the whole
+suite normally, even though it can't *compile* the `_windows.go` files
+(excluded from the Linux build by `//go:build windows` — see below).
 
-## O que tem teste automatizado
+## What has automated test coverage
 
-Pacotes/arquivos sem dependência de SO, cobertos com teste unitário:
+OS-independent packages/files, covered with unit tests:
 
-| Pacote/arquivo | O que testa |
+| Package/file | What it tests |
 |---|---|
-| `internal/protocol` | round-trip de `WriteMessage`/`ReadMessage`, limite de tamanho, mensagem truncada, `Edge.Opposite()` |
-| `internal/clipsync` | round-trip de `WriteFrame`/`ReadFrame`, limite de tamanho, `ClipAddr` (derivação porta+1) |
-| `internal/auth` | `TokensEqual` (igual, diferente, tamanho diferente, vazio) |
-| `internal/tlsutil` | persistência de certificado, formato/determinismo do fingerprint, `KnownHosts` (trust/lookup/persistência em disco) |
-| `internal/keys` | round-trip `NameToVK`↔`VKToName` (Windows) / `NameToKeycode`↔`KeycodeToName` (Linux) sem código duplicado — só roda a metade que bate com o SO atual |
-| `cmd/controller/edge_math.go` | toda a geometria pura da troca por borda (`entryPosition`, `pushesPast`, `hasMovedAway`, `releaseRelPos`, `controllerWarpPosition`, mais um teste de round-trip engage→disengage) — extraída de `edge_windows.go` **de propósito** pra não precisar de Windows pra testar. É a mesma matemática por trás dos dois bugs de mouse descritos em [`docs/known-issues.md`](known-issues.md). |
+| `internal/protocol` | `WriteMessage`/`ReadMessage` round trip, size limit, truncated message, `Edge.Opposite()` |
+| `internal/clipsync` | `WriteFrame`/`ReadFrame` round trip, size limit, `ClipAddr` (port+1 derivation) |
+| `internal/auth` | `TokensEqual` (equal, different, different length, empty) |
+| `internal/tlsutil` | certificate persistence, fingerprint format/determinism, `KnownHosts` (trust/lookup/disk persistence) |
+| `internal/keys` | `NameToVK`↔`VKToName` round trip (Windows) / `NameToKeycode`↔`KeycodeToName` (Linux), no code duplication — only the half matching the current OS runs |
+| `cmd/controller/edge_math.go` | all the pure geometry behind edge switching (`entryPosition`, `pushesPast`, `hasMovedAway`, `releaseRelPos`, `controllerWarpPosition`, plus an engage→disengage round-trip test) — extracted from `edge_windows.go` **on purpose** so it doesn't need Windows to test. It's the exact math behind the two mouse bugs described in [`docs/known-issues.md`](known-issues.md). |
 
-## O que **não** tem, e por quê
+## What doesn't, and why
 
-O grosso da lógica que realmente importa (hooks de baixo nível do
-Windows, `SendInput`, Raw Input, leitura/escrita do clipboard nativo) vive
-em arquivos `_windows.go` que chamam a API do Win32 direto via `syscall`.
-Não dá pra unit-testar isso de verdade sem uma sessão Windows real com
-teclado/mouse/clipboard — não existe um jeito barato de simular
-`WH_MOUSE_LL`/`SendInput`/`OpenClipboard` em teste automatizado, e mockar
-tudo isso perderia justamente a parte que mais quebrou até hoje (ver os
-bugs em [`docs/known-issues.md`](known-issues.md) — nenhum deles teria
-sido pego por um mock).
+The bulk of the logic that actually matters (Windows low-level hooks,
+`SendInput`, Raw Input, native clipboard read/write) lives in
+`_windows.go` files that call the Win32 API directly via `syscall`.
+There's no real way to unit-test that without an actual Windows session
+with a real keyboard/mouse/clipboard — there's no cheap way to simulate
+`WH_MOUSE_LL`/`SendInput`/`OpenClipboard` in an automated test, and
+mocking all of it would lose exactly the part that has broken the most so
+far (see the bugs in [`docs/known-issues.md`](known-issues.md) — none of
+them would have been caught by a mock).
 
-Regra usada neste repo: **toda lógica pura (matemática, parsing, framing,
-decisão) que puder ser separada da chamada de sistema deve ser extraída
-pra um arquivo sem build tag e testada** (é o que foi feito com
-`edge_math.go` e é o modelo pra próximas extrações — ex. se a lógica de
-parsing de `BI_BITFIELDS` em `internal/clipboard` crescer, vale separar o
-parsing puro de bytes→`image.Image` da chamada de `GetClipboardData`).
+Rule used in this repo: **any pure logic (math, parsing, framing,
+decision-making) that can be separated from the syscall it's next to
+should be extracted into a file with no build tag and tested** (that's
+what was done for `edge_math.go`, and it's the model for future
+extractions — e.g. if the `BI_BITFIELDS` parsing in `internal/clipboard`
+grows, it'd be worth separating the pure bytes→`image.Image` parsing from
+the `GetClipboardData` call).
 
-### Checklist de teste manual (Windows-only, duas máquinas)
+### Manual test checklist (Windows-only, two machines)
 
-Sem substituto automatizado pra isso hoje — rodar depois de qualquer
-mudança em `internal/capture`, `internal/inject`, `internal/clipboard` ou
+No automated substitute for this today — run it after any change to
+`internal/capture`, `internal/inject`, `internal/clipboard`, or
 `cmd/*/edge_windows.go`/`cmd/*/clipboard_windows.go`:
 
-1. **Legado**: `controller` sem `-edge` reflete teclado/mouse continuamente.
-2. **Edge crossing**: empurrar o cursor pra borda engaja; empurrar de
-   volta pela mesma borda desengaja — sem flip espúrio logo após engajar
-   (era o bug do `pt`-diffing).
-3. **Clipboard texto**, as duas direções (`Ctrl+Alt+V` engaged e
+1. **Legacy**: `controller` without `-edge` reflects keyboard/mouse
+   continuously.
+2. **Edge crossing**: pushing the cursor to the edge engages; pushing
+   back through the same edge disengages — no spurious flip right after
+   engaging (that was the `pt`-diffing bug).
+3. **Clipboard text**, both directions (`Ctrl+Alt+V` engaged and
    disengaged).
-4. **Clipboard imagem** (`PrintScreen`), as duas direções — cobre o
-   parsing de `BI_BITFIELDS`.
-5. **Segurar o atalho por mais tempo** (autorepeat do `V`) não deve deixar
-   nenhum modificador preso depois.
-6. Se mexer em `internal/keys` ou nos mapeamentos de tecla: testar pelo
-   menos uma tecla de cada categoria (letra, número, função, modificador,
-   pontuação) chegando certa do outro lado.
+4. **Clipboard image** (`PrintScreen`), both directions — covers the
+   `BI_BITFIELDS` parsing.
+5. **Holding the hotkey longer** (V's auto-repeat) shouldn't leave any
+   modifier stuck afterward.
+6. If touching `internal/keys` or the key mappings: test at least one key
+   from each category (letter, number, function, modifier, punctuation)
+   arriving correctly on the other end.
 
 ## `scripts/build.sh`
 
-Não é teste, mas é o que garante que os quatro alvos de build (target e
-controller pra Windows e Linux, tray só Windows) continuam compilando —
-rode antes de abrir PR:
+Not a test, but it's what guarantees the four build targets (target and
+controller for Windows and Linux, tray Windows-only) keep compiling — run
+it before opening a PR:
 
 ```sh
 ./scripts/build.sh

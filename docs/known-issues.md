@@ -1,127 +1,127 @@
-# Bugs conhecidos e por quê
+# Known bugs and why
 
-Cada item aqui foi um bug real, diagnosticado e corrigido (ou documentado
-como limitação aceita). Objetivo: não redescobrir a mesma causa raiz do
-zero da próxima vez que o sintoma aparecer parecido.
+Each entry here was a real bug, diagnosed and fixed (or documented as an
+accepted limitation). Goal: don't rediscover the same root cause from
+scratch the next time a similar symptom shows up.
 
-## Deltas de mouse via `pt`-diffing do hook quebram quando suprimido
+## Mouse deltas via hook `pt`-diffing break once suppressed
 
-**Sintoma**: logo após "engaged", o log mostrava "disengaged" quase no
-mesmo instante — um round-trip espúrio.
+**Symptom**: right after "engaged", the log showed "disengaged" almost
+instantly afterward — a spurious round trip.
 
-**Causa**: `internal/capture/capture_windows.go` calculava o delta do
-mouse comparando a posição absoluta (`pt`) entre chamadas consecutivas do
-hook `WH_MOUSE_LL`. Assim que o `controller` começa a suprimir o input
-local (engaged), o Windows **não confirma** a nova posição do cursor —
-então `pt` para de acumular de forma confiável, e a diferença entre
-eventos vira ruído. Esse ruído às vezes batia com a condição de "empurrou
-de volta pela borda de entrada" segundos depois de engajar.
+**Cause**: `internal/capture/capture_windows.go` computed the mouse delta
+by diffing the absolute position (`pt`) between consecutive `WH_MOUSE_LL`
+hook calls. As soon as the `controller` starts suppressing local input
+(engaged), Windows **doesn't commit** the new cursor position — so `pt`
+stops accumulating reliably, and the difference between events turns into
+noise. That noise sometimes happened to satisfy the "pushed back past the
+entry edge" condition a moment after engaging.
 
-**Fix**: captura de delta migrada pra API **Raw Input** do Windows
-(`RegisterRawInputDevices` + `WM_INPUT` numa janela oculta, lendo
-`RAWMOUSE.lLastX/lLastY`) — dá o delta relativo de verdade, HID puro,
-independente de supressão/clamping do cursor. `WH_MOUSE_LL` hoje só cuida
-de detectar a borda (precisa de posição absoluta) e suprimir/repassar
-clique/scroll/teclado. Mesma técnica que Synergy/Barrier usam no Windows.
+**Fix**: delta capture moved to the Windows **Raw Input** API
+(`RegisterRawInputDevices` + `WM_INPUT` on a hidden window, reading
+`RAWMOUSE.lLastX/lLastY`) — gives the true relative HID delta,
+independent of cursor suppression/clamping. `WH_MOUSE_LL` today only
+handles edge detection (needs absolute position) and
+suppressing/forwarding clicks/scroll/keyboard. Same technique
+Synergy/Barrier use on Windows.
 
-**Lição**: qualquer coisa que faça diff de posição do cursor do Windows
-através de um trecho onde o input está sendo suprimido ou injetado não é
-confiável — prefira deltas de Raw Input ou um warp explícito de
-recentralização.
+**Lesson**: anything that diffs the Windows cursor position across a span
+where input is being suppressed or injected is unreliable — prefer Raw
+Input deltas or an explicit re-centering warp.
 
-## `BI_BITFIELDS` não suportado ao ler imagem do clipboard
+## `BI_BITFIELDS` unsupported when reading a clipboard image
 
-**Sintoma**: colar um print de tela (`PrintScreen`) falhava silenciosamente
-— nada chegava do outro lado, e o log do controller mostrava
+**Symptom**: pasting a screenshot (`PrintScreen`) failed silently —
+nothing arrived on the other end, and the controller's log showed
 `clipboard: unsupported DIB compression 3`.
 
-**Causa**: `internal/clipboard.ReadImagePNG` só sabia interpretar
-`BI_RGB` (compressão 0). Só que `BI_BITFIELDS` (compressão 3) é o formato
-que o Windows **quase sempre** usa pra bitmap de 32bpp de captura de tela
-— as 3 máscaras de canal de cor (R/G/B) vêm em 3 DWORDs extras logo após o
-`BITMAPINFOHEADER`, em vez de posição de byte fixa.
+**Cause**: `internal/clipboard.ReadImagePNG` only understood `BI_RGB`
+(compression 0). But `BI_BITFIELDS` (compression 3) is the format Windows
+**almost always** uses for a 32bpp screen-capture bitmap — the 3 color
+channel masks (R/G/B) come as 3 extra DWORDs right after the
+`BITMAPINFOHEADER`, instead of a fixed byte position.
 
-**Fix**: aceitar `BI_BITFIELDS` pra 32bpp, ler as 3 máscaras e extrair
-cada canal via `bits.TrailingZeros32(mask)` como shift, em vez de assumir
-byte fixo.
+**Fix**: accept `BI_BITFIELDS` for 32bpp, read the 3 masks, and extract
+each channel via `bits.TrailingZeros32(mask)` as a shift, instead of
+assuming a fixed byte offset.
 
-**Lição**: não assuma o caso mais simples (`BI_RGB`) ao ler dado real de
-bitmap do Windows — `BI_BITFIELDS` é o caso comum pra 32bpp, não o raro.
+**Lesson**: don't assume the simplest case (`BI_RGB`) when reading real
+Windows bitmap data — `BI_BITFIELDS` is the common case for 32bpp, not
+the rare one.
 
-## `Ctrl+Alt+V` colava o combo errado no app focado
+## `Ctrl+Alt+V` pasted the wrong combo into the focused app
 
-**Sintoma**: o clipboard chegava certinho no outro lado (log mostrava
-"received text/image, pasting"), mas nada aparecia no app.
+**Symptom**: the clipboard arrived correctly on the other end (the log
+showed "received text/image, pasting"), but nothing appeared in the app.
 
-**Causa**: o atalho `Ctrl+Alt+V` só suprime a tecla `V` — o `Ctrl` e o
-`Alt` continuam sendo encaminhados/injetados normalmente como teclas
-comuns. No momento de colar, o `Ctrl+V` sintético era injetado **em cima**
-de um `Alt` que o app ainda via como pressionado — ou seja, o app recebia
-`Ctrl+Alt+V` de verdade, que não é atalho de colar em lugar nenhum.
+**Cause**: the `Ctrl+Alt+V` hotkey only suppresses the `V` key — `Ctrl`
+and `Alt` keep being forwarded/injected as ordinary keys. At paste time,
+the synthetic `Ctrl+V` was injected **on top of** an `Alt` the app still
+saw as held — i.e. the app actually received `Ctrl+Alt+V`, which isn't a
+paste shortcut anywhere.
 
-**Fix**: `injectPaste` (em `cmd/target/clipboard_windows.go` e
-`cmd/controller/clipboard_windows.go`) agora solta explicitamente
-`ControlLeft/Right`, `AltLeft/Right` e `ShiftLeft/Right` **antes** de
-injetar o `Ctrl+V` limpo.
+**Fix**: `injectPaste` (in `cmd/target/clipboard_windows.go` and
+`cmd/controller/clipboard_windows.go`) now explicitly releases
+`ControlLeft/Right`, `AltLeft/Right`, and `ShiftLeft/Right` **before**
+injecting the clean `Ctrl+V`.
 
-## Tecla modificadora "presa" pelo autorepeat do `V`
+## Modifier key "stuck" from `V`'s auto-repeat
 
-**Sintoma**: depois de usar o clipboard, o teclado do controller "bugava"
-— digitar normal disparava atalhos do Windows (abrir janelas etc.), e nem
-matar o app resolvia.
+**Symptom**: after using the clipboard feature, the controller's keyboard
+"broke" — typing normally triggered Windows shortcuts (opening windows,
+etc.), and even killing the app didn't fix it.
 
-**Causa**: `V` (diferente de `Ctrl`/`Alt`, que não repetem) tem autorepeat
-do Windows enquanto fica pressionado. O handler do atalho disparava a
-**cada repetição**, criando goroutines de `injectPaste` sobrepostas que
-competiam entre si soltando/pressionando `Ctrl` — deixando um modificador
-"preso" no nível do SO.
+**Cause**: `V` (unlike `Ctrl`/`Alt`, which don't repeat) auto-repeats on
+Windows while held. The hotkey handler fired on **every repeat**, spawning
+overlapping `injectPaste` goroutines that raced each other releasing/
+pressing `Ctrl` — leaving a modifier "stuck" at the OS level.
 
-**Fix**: só dispara uma vez por pressão física (guarda em
-`!s.hotkeyVDown` em `internal/capture/capture_windows.go`) + mutex
-serializando `injectPaste` nos dois lados, como reforço.
+**Fix**: only fire once per physical press (guarded by `!s.hotkeyVDown` in
+`internal/capture/capture_windows.go`) + a mutex serializing
+`injectPaste` on both sides, as a backstop.
 
-**Truque de recuperação ao vivo** (sem precisar reiniciar o Windows): um
-`Ctrl+Alt+Del` físico reseta o estado — é tratado pela Secure Attention
-Sequence do Windows, abaixo de qualquer hook de modo usuário, e a troca de
-desktop limpa o estado de tecla presa como efeito colateral. Também vale
-tentar: apertar e soltar sozinho o modificador preso (hardware de
-verdade), o Teclado Virtual, ou fazer logoff/login.
+**Live recovery trick** (no Windows restart needed): a physical
+`Ctrl+Alt+Del` resets it — it's handled by Windows' Secure Attention
+Sequence, below any user-mode hook, and the desktop switch clears the
+stuck key state as a side effect. Also worth trying: pressing and
+releasing the stuck modifier alone (real hardware), the On-Screen
+Keyboard, or signing out and back in.
 
-## Ícones de bandeja de processos elevados não respondem ao input injetado
+## Elevated processes' tray icons don't respond to injected input
 
-**Sintoma**: passar o cursor (controlado remotamente) sobre certos ícones
-da bandeja do Windows (ex. antivírus) trava o controle na hora; mexer o
-mouse físico de verdade na máquina alvo destrava.
+**Symptom**: hovering the (remotely controlled) cursor over certain
+Windows tray icons (e.g. an antivirus) freezes control instantly; moving
+the physical mouse on the target machine unfreezes it.
 
-**Causa**: **UIPI** (User Interface Privilege Isolation), uma proteção do
-próprio Windows — input sintético (`SendInput`, como o `target` injeta o
-cursor) de um processo com privilégio menor é bloqueado de afetar UI de um
-processo com privilégio maior. Confirmado rodando `target`/`tray` como
-Administrador: ícones "normais" pararam de travar, mas o do antivírus
-continuou — o componente de bandeja dele provavelmente roda num nível de
-integridade ainda mais alto (perto de SYSTEM), de propósito, como
-proteção anti-adulteração.
+**Cause**: **UIPI** (User Interface Privilege Isolation), a Windows
+protection — synthetic input (`SendInput`, how `target` injects the
+cursor) from a lower-privilege process is blocked from affecting UI
+belonging to a higher-privilege one. Confirmed by running
+`target`/`tray` as Administrator: "normal" icons stopped freezing, but
+the antivirus's kept doing it — its tray component likely runs at an even
+higher integrity level (near SYSTEM), by design, as tamper-resistance.
 
-**Não é bug nosso.** Confirmado que Synergy, Barrier e o Mouse Without
-Borders da própria Microsoft têm exatamente a mesma limitação com janelas
-elevadas/UAC — é uma fronteira de segurança do Windows, não uma falha de
-implementação. Rodar como Administrador ajuda com elevação comum (UAC);
-não tem como (nem faria sentido) subir pra SYSTEM só por causa disso.
+**Not a bug in this code.** Confirmed that Synergy, Barrier, and
+Microsoft's own Mouse Without Borders have exactly the same limitation
+with elevated/UAC windows — it's a Windows security boundary, not an
+implementation gap. Running as Administrator helps with common elevation
+(UAC); there's no reasonable way (or need) to go as far as SYSTEM just
+for this.
 
-## `tray.log` não captura crash do próprio `tray.exe`
+## `tray.log` doesn't capture `tray.exe`'s own crash
 
-**Status: identificado, ainda não corrigido.**
+**Status: identified, not yet fixed.**
 
-`tray.log` só captura a saída dos processos filhos (`target`/`controller`)
-via `log.SetOutput` do pacote `log`. Um panic/crash do próprio `tray.exe`
-(que roda sem console, `-H=windowsgui`) não vai pra lugar nenhum — a
-última linha do log antes dele sumir é sempre de um processo filho, nunca
-do próprio tray. Aconteceu de verdade numa suspensão/hibernação de
-madrugada: o processo `target` filho saiu com erro, o tray bateu um erro
-interno de tooltip do systray no mesmo segundo, e depois nada — o processo
-tinha sumido.
+`tray.log` only captures child-process (`target`/`controller`) output via
+the `log` package's `log.SetOutput`. A panic/crash in `tray.exe` itself
+(which runs without a console, `-H=windowsgui`) goes nowhere — the last
+line in the log before it disappears is always from a child process,
+never from the tray itself. This happened for real during an overnight
+sleep/hibernate: the child `target` process exited with an error, the
+tray hit an internal systray tooltip error the same second, and then
+nothing — the process was gone.
 
-**Mitigação proposta** (não implementada): redirecionar os handles reais
-de stdout/stderr do processo (não só `log.SetOutput`, que só cobre a
-biblioteca `log`) pro arquivo de log logo no início do `main()`, mais um
-limite de tamanho/rotação.
+**Proposed mitigation** (not implemented): redirect the process's real
+stdout/stderr handles (not just `log.SetOutput`, which only covers the
+`log` package) to the log file right at the start of `main()`, plus a
+size cap/rotation.

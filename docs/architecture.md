@@ -1,94 +1,97 @@
-# Arquitetura
+# Architecture
 
-## Visão geral
+## Overview
 
 ```
-controller (captura input local)  --TLS-->  target (injeta input recebido)
+controller (captures local input)  --TLS-->  target (injects received input)
       |                                            |
       capture.Source                          inject.Injector
       (WH_*_LL hooks + Raw Input, Windows)     (SendInput, Windows)
 ```
 
-Dois binários (`cmd/controller`, `cmd/target`), um pacote de perfis/GUI
-(`cmd/tray`), conectados por dois protocolos de rede independentes:
+Two binaries (`cmd/controller`, `cmd/target`), one profile/GUI package
+(`cmd/tray`), connected by two independent network protocols:
 
-- **`internal/protocol`** — mouse/teclado/handshake, latência importa.
-- **`internal/clipsync`** — clipboard (texto/imagem), pode ser grande e
-  lento sem afetar o outro.
+- **`internal/protocol`** — mouse/keyboard/handshake, where latency
+  matters.
+- **`internal/clipsync`** — clipboard (text/image), which can be large
+  and slow without affecting the other.
 
-Cada `cmd/*` tem arquivos `_windows.go` / `_other.go` (ou `_linux.go`) pra
-isolar o que só existe numa plataforma — o `main.go` de cada um é
-agnóstico de SO e só chama funções com a mesma assinatura dos dois lados
-(ex. `runEdgeAware`, `startClipboardListener`).
+Each `cmd/*` has `_windows.go` / `_other.go` (or `_linux.go`) files to
+isolate what only exists on one platform — each `main.go` is OS-agnostic
+and only calls functions with the same signature on both sides (e.g.
+`runEdgeAware`, `startClipboardListener`).
 
-## Dois modos do `controller`
+## The `controller`'s two modes
 
-- **Legado** (sem `-edge`): `capture.New()` — encaminha tudo sempre,
-  sem supressão local. `cmd/controller/main.go:runLegacy`.
+- **Legacy** (no `-edge`): `capture.New()` — always forwards everything,
+  no local suppression. `cmd/controller/main.go:runLegacy`.
 - **Edge-aware** (`-edge left|right|top|bottom`): `capture.NewEdgeAware`
-  — só encaminha/suprime depois que o cursor cruza a borda configurada.
-  `cmd/controller/edge_windows.go:runEdgeAware`.
+  — only forwards/suppresses after the cursor crosses the configured
+  edge. `cmd/controller/edge_windows.go:runEdgeAware`.
 
-## Máquina de estados do engage/disengage
+## Engage/disengage state machine
 
-Vive em `runEdgeAware` (`cmd/controller/edge_windows.go`), com a
-geometria pura extraída pra `cmd/controller/edge_math.go` (sem build tag,
-testável em qualquer SO — ver [`docs/testing.md`](testing.md)).
+Lives in `runEdgeAware` (`cmd/controller/edge_windows.go`), with the pure
+geometry extracted into `cmd/controller/edge_math.go` (no build tag,
+testable on any OS — see [`docs/testing.md`](testing.md)).
 
-1. Cursor cruza a borda configurada → `capture.EdgeCrossedEvent` →
-   `engaged = true`, manda `MsgEngage` (com a posição relativa ao longo da
-   borda), começa a simular a posição do cursor no `target` (`vx, vy`)
-   localmente, sem precisar de round-trip de rede pra saber quando soltar.
-2. Enquanto engaged, cada `MouseMoveEvent` atualiza `vx, vy` e checa se
-   ele já se afastou da borda de entrada (`hasMovedAway`) e, depois, se
-   empurrou de volta pra fora dela (`pushesPast`) — só conta como
-   "soltar" se as duas coisas aconteceram nessa ordem (`movedAway &&
-   pushingOutEntry`), pra não soltar sozinho por causa de ruído logo após
-   o crossing.
-3. Ao soltar: calcula onde o cursor *local* deve reaparecer
-   (`controllerWarpPosition`, um pixel pra dentro da borda que disparou o
-   crossing) e chama `src.Disengage(...)`.
+1. Cursor crosses the configured edge → `capture.EdgeCrossedEvent` →
+   `engaged = true`, sends `MsgEngage` (with the relative position along
+   the edge), starts simulating the cursor position on the `target`
+   (`vx, vy`) locally, so it doesn't need a network round trip to know
+   when to release.
+2. While engaged, every `MouseMoveEvent` updates `vx, vy` and checks
+   whether it has already moved away from the entry edge
+   (`hasMovedAway`) and, later, whether it's pushed back out through it
+   (`pushesPast`) — it only counts as "release" if both happened in that
+   order (`movedAway && pushingOutEntry`), so it doesn't release itself
+   from noise right after the crossing.
+3. On release: computes where the *local* cursor should reappear
+   (`controllerWarpPosition`, one pixel inside the edge that triggered
+   the crossing) and calls `src.Disengage(...)`.
 
-O `target` só participa passivamente: ao receber `MsgEngage`, calcula a
-posição de entrada (mesma lógica, `entryPosition`) e faz um único
-`SetCursorPos` — dali em diante só recebe `MsgMouseMove` (deltas) até o
-próximo `MsgEngage`.
+The `target` only participates passively: on receiving `MsgEngage`, it
+computes the entry position (same logic, `entryPosition`) and does a
+single `SetCursorPos`. From then on it only receives `MsgMouseMove`
+(deltas) until the next `MsgEngage`.
 
 ## Clipboard (`Ctrl+Alt+V`)
 
-- **Detecção do atalho**: `internal/capture/capture_windows.go`,
-  `keyboardProc` rastreia estado de Ctrl/Alt segurados *fora* do portão
-  normal de forward/suppress (funciona engaged ou disengaged). Ao ver `V`
-  descendo com os dois segurados, emite `HotkeyPasteEvent` e suprime a
-  tecla — nunca é encaminhada como `V` literal, nem local nem pro target.
-- **Conexão dedicada**: `internal/clipsync` — framing binário simples
-  (kind + tamanho + payload, sem JSON/base64) numa segunda conexão TLS,
-  porta principal + 1 (`ClipAddr`). Existe pra um payload grande (print de
-  tela) nunca competir na fila com pacotes de mouse na conexão principal.
-- **Direção**: decidida em `cmd/controller/edge_windows.go` no momento do
-  `HotkeyPasteEvent`, lendo o `engaged` atual — engaged empurra o
-  clipboard local pro target; disengaged pede o do target e cola local
-  (por isso o `controller` tem seu próprio `inject.New()`, que ele não
-  precisava antes desse recurso).
-- **Leitura/escrita do clipboard do Windows**: `internal/clipboard` — só
-  texto (`CF_UNICODETEXT`) e imagem (`CF_DIB` ↔ PNG, parsing manual de
-  `BITMAPINFOHEADER`, ver [`docs/known-issues.md`](known-issues.md) sobre
-  `BI_BITFIELDS`).
+- **Hotkey detection**: `internal/capture/capture_windows.go`,
+  `keyboardProc` tracks Ctrl/Alt held state *outside* the normal
+  forward/suppress gate (works engaged or disengaged). On seeing `V` go
+  down with both held, it emits `HotkeyPasteEvent` and suppresses the
+  key — it's never forwarded as a literal `V`, locally or to the target.
+- **Dedicated connection**: `internal/clipsync` — simple binary framing
+  (kind + length + payload, no JSON/base64) over a second TLS connection,
+  main port + 1 (`ClipAddr`). This exists so a large payload
+  (screenshot) never competes in the queue with mouse packets on the main
+  connection.
+- **Direction**: decided in `cmd/controller/edge_windows.go` at the
+  moment of `HotkeyPasteEvent`, by reading the current `engaged` state —
+  engaged pushes the local clipboard to the target; disengaged requests
+  the target's and pastes locally (which is why the `controller` has its
+  own `inject.New()`, which it didn't need before this feature).
+- **Reading/writing the Windows clipboard**: `internal/clipboard` — text
+  (`CF_UNICODETEXT`) and image (`CF_DIB` ↔ PNG, manual
+  `BITMAPINFOHEADER` parsing, see [`docs/known-issues.md`](known-issues.md)
+  on `BI_BITFIELDS`) only.
 
 ## `tray`
 
-`cmd/tray` não tem lógica de captura/injeção própria — é só uma casca de
-processo: lê/escreve `%AppData%\kbs\tray_profiles.json`, desenha o menu
-(`fyne.io/systray`) e sobe `target*.exe`/`controller*.exe` como
-subprocessos escondidos (`CREATE_NO_WINDOW`), capturando a saída deles
-pro log. Ver [`docs/known-issues.md`](known-issues.md) sobre a lacuna de
-log do próprio `tray.exe`.
+`cmd/tray` has no capture/injection logic of its own — it's just a
+process shell: reads/writes `%AppData%\kbs\tray_profiles.json`, draws the
+menu (`fyne.io/systray`), and spawns `target*.exe`/`controller*.exe` as
+hidden subprocesses (`CREATE_NO_WINDOW`), capturing their output to the
+log. See [`docs/known-issues.md`](known-issues.md) about the gap in
+`tray.exe`'s own crash logging.
 
-## Convenção de versionamento pra desenvolvimento
+## Development-parallel-build convention
 
-Quando uma mudança pode quebrar uma sessão já em uso nas duas máquinas,
-builda-se sob um nome diferente (`target2.exe`, `controller2.exe`,
-`tray2.exe`, via `scripts/build.sh --suffix 2`) em vez de sobrescrever o
-que já está rodando — assim dá pra testar sem derrubar quem já está
-conectado. `cmd/tray` não hardcoda esse sufixo; é uma prática de deploy
-paralelo, não uma feature do software.
+When a change might break a session already in use on both machines,
+build under a different name (`target2.exe`, `controller2.exe`,
+`tray2.exe`, via `scripts/build.sh --suffix 2`) instead of overwriting
+what's already running — that way it can be tested without dropping
+whoever's already connected. `cmd/tray` doesn't hardcode that suffix;
+it's a parallel-deployment practice, not a feature of the software.

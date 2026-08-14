@@ -1,68 +1,67 @@
 # ai-context
 
-Ponto de entrada pra quem (ou qual IA) for mexer no `kbs` no dia a dia.
-Este arquivo fica **enxuto de propósito** — é um índice, não uma
-enciclopédia. Só abra os arquivos linkados abaixo quando a tarefa em mãos
-realmente tocar naquela área; não carregue tudo sempre.
+Entry point for anyone (or any AI) working on `ea-share` day to day. This
+file is deliberately kept **short** — it's an index, not an encyclopedia.
+Only open the linked files below when the task at hand actually touches
+that area; don't load everything every time.
 
-## O que é
+## What this is
 
-`kbs` é um "reverse KVM": `controller` captura teclado/mouse local e manda
-pro `target`, que injeta. Dois modos (sempre-compartilha, ou troca por
-borda tipo Synergy via `-edge`), clipboard compartilhado via `Ctrl+Alt+V`,
-e um ícone de bandeja (`tray`) opcional pra rodar sem terminal. Detalhes
-de uso: [`README.md`](README.md).
+`ea-share` is a "reverse KVM": `controller` captures local keyboard/mouse
+and sends it to `target`, which injects it. Two modes (always-share, or
+Synergy-style edge switching via `-edge`), a shared clipboard via
+`Ctrl+Alt+V`, and an optional system tray icon (`tray`) to run without a
+terminal. Usage details: [`README.md`](README.md).
 
-Go, sem CGO, Windows é a plataforma principal (todo o input real
-acontece via `syscall` direto no Win32); Linux tem só o modo
-sempre-compartilha; macOS não implementado.
+Go, no CGO, Windows is the primary platform (all the real input handling
+goes through direct Win32 `syscall` calls); Linux only has the
+always-share mode; macOS isn't implemented.
 
-## Antes de mexer em algo, leia
+## Before touching something, read
 
-| Se a tarefa envolve... | Leia |
+| If the task involves... | Read |
 |---|---|
-| Entender como as peças se conectam, protocolo, estados de engage/disengage | [`docs/architecture.md`](docs/architecture.md) |
-| Um bug que *parece* familiar (mouse trava, clipboard não cola, tecla presa) | [`docs/known-issues.md`](docs/known-issues.md) — **confira aqui antes de investigar do zero** |
-| Rodar ou escrever teste, decidir se algo é testável | [`docs/testing.md`](docs/testing.md) |
-| Buildar pra Windows/Linux | [`scripts/build.sh`](scripts/build.sh) |
+| Understanding how the pieces connect, the protocol, engage/disengage states | [`docs/architecture.md`](docs/architecture.md) |
+| A bug that *looks* familiar (mouse freezes, clipboard won't paste, stuck key) | [`docs/known-issues.md`](docs/known-issues.md) — **check here before investigating from scratch** |
+| Running or writing a test, deciding whether something is testable | [`docs/testing.md`](docs/testing.md) |
+| Building for Windows/Linux | [`scripts/build.sh`](scripts/build.sh) |
 
-## Os 5 fatos que mais custam redescobrir
+## The 5 facts that are most expensive to rediscover
 
-1. **Nunca faça diff de posição absoluta do cursor (`pt` do hook) através
-   de um trecho onde o input está sendo suprimido/injetado** — o Windows
-   não confirma a posição nesse caso, e o diff vira ruído. Use Raw Input
-   (`WM_INPUT`/`RAWMOUSE`) pra delta relativo de verdade. (bug real, ver
-   known-issues.md)
-2. **`Ctrl+Alt+V` só suprime o `V`** — Ctrl/Alt continuam sendo
-   encaminhados/injetados como teclas normais. Qualquer injeção de tecla
-   sintética que dependa de um modificador "limpo" precisa soltar
-   Ctrl/Alt/Shift primeiro.
-3. **Imagem de clipboard do Windows quase sempre vem como
-   `BI_BITFIELDS`**, não `BI_RGB` — não assuma o formato mais simples.
-4. **Teclas normais (não-modificadoras) têm autorepeat do Windows**; um
-   handler de hotkey precisa deduplicar por pressão física, não por
-   evento de tecla, ou dispara múltiplas vezes concorrentes enquanto
-   segurada.
-5. **Janelas/processos elevados (UAC, antivírus) não respondem a
-   `SendInput` de um processo com privilégio menor** — é o Windows
-   (UIPI), não um bug nosso; a mesma limitação existe em Synergy/Barrier.
+1. **Never diff the cursor's absolute position (the hook's `pt`) across a
+   span where input is being suppressed/injected** — Windows doesn't
+   commit the position in that case, and the diff turns into noise. Use
+   Raw Input (`WM_INPUT`/`RAWMOUSE`) for a true relative delta. (real bug,
+   see known-issues.md)
+2. **`Ctrl+Alt+V` only suppresses `V`** — Ctrl/Alt keep being
+   forwarded/injected as ordinary keys. Any synthetic key injection that
+   depends on a "clean" modifier state needs to release Ctrl/Alt/Shift
+   first.
+3. **Windows clipboard images almost always arrive as `BI_BITFIELDS`**,
+   not `BI_RGB` — don't assume the simplest format.
+4. **Non-modifier keys auto-repeat on Windows**; a hotkey handler needs to
+   dedupe by physical press, not by key event, or it fires multiple
+   concurrent times while held.
+5. **Elevated windows/processes (UAC, antivirus) don't respond to
+   `SendInput` from a lower-privilege process** — that's Windows (UIPI),
+   not a bug in this code; the same limitation exists in Synergy/Barrier.
 
-## Lógica pura vs. syscall — onde vive o quê
+## Pure logic vs. syscalls — where things live
 
-Regra do repo: lógica que não depende de SO fica em arquivo **sem** build
-tag (testável em qualquer plataforma); o que chama API de SO fica isolado
-em `_windows.go`/`_linux.go`/`_other.go` com a mesma assinatura de função
-nos dois lados. Exemplo canônico: a matemática de troca de borda vive em
-`cmd/controller/edge_math.go` (sem build tag, testada), separada do hook
-do Windows em `edge_windows.go`. Ao adicionar lógica nova com uma
-chamada de sistema no meio, considere se a decisão/parsing pode ser
-extraída do mesmo jeito.
+Repo convention: OS-independent logic lives in a file **without** a build
+tag (testable on any platform); anything calling an OS API is isolated in
+`_windows.go`/`_linux.go`/`_other.go` with the same function signature on
+each side. Canonical example: the edge-switching math lives in
+`cmd/controller/edge_math.go` (no build tag, tested), separate from the
+Windows hook in `edge_windows.go`. When adding new logic that involves a
+syscall, consider whether the decision/parsing part can be extracted the
+same way.
 
-## Convenção de build paralelo
+## Parallel-build convention
 
-Ao testar uma mudança que pode quebrar uma sessão já em uso (duas
-máquinas conectadas ao vivo), builde sob um sufixo em vez de sobrescrever
-o binário em uso: `./scripts/build.sh --suffix 2` gera
-`target2.exe`/`controller2.exe`/`tray2.exe` ao lado dos originais. Não é
-uma convenção permanente do projeto — é só pra não derrubar quem já está
-conectado enquanto se testa algo novo.
+When testing a change that could break a deployment already in use (two
+machines connected live), build under a suffix instead of overwriting the
+binary in use: `./scripts/build.sh --suffix 2` produces
+`target2.exe`/`controller2.exe`/`tray2.exe` alongside the originals. This
+isn't a permanent project convention — it's just to avoid dropping
+whoever's already connected while testing something new.
