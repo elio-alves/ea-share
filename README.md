@@ -188,6 +188,8 @@ clock) with a menu to start/stop each one from **saved profiles**.
 - **Stop target** / **Stop controller** end the running process.
 - **Copy target token** copies it to the clipboard (to paste when
   creating the controller's profile on the other machine).
+- **Language** switches the menu between English and Português, saved to
+  the same profile file (`"lang": "en"` or `"pt"`).
 - Connections made by `tray` automatically trust an unknown target's
   certificate on first connect (equivalent to `-yes`, since there's no
   terminal to confirm the fingerprint) — after that the fingerprint is

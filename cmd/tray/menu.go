@@ -57,12 +57,12 @@ func (a *app) rebuild() {
 
 	var statusParts []string
 	if runningTargetName != "" {
-		statusParts = append(statusParts, "ouvindo como "+runningTargetName)
+		statusParts = append(statusParts, tr("status.listening_as", runningTargetName))
 	}
 	if runningCtrlName != "" {
-		statusParts = append(statusParts, "controlando "+runningCtrlName)
+		statusParts = append(statusParts, tr("status.controlling", runningCtrlName))
 	}
-	status := "parado"
+	status := tr("status.stopped")
 	if len(statusParts) > 0 {
 		status = strings.Join(statusParts, " · ")
 	}
@@ -72,7 +72,7 @@ func (a *app) rebuild() {
 
 	systray.AddSeparator()
 
-	targetMenu := systray.AddMenuItem("Ouvir como target", "")
+	targetMenu := systray.AddMenuItem(tr("menu.listen_as_target"), "")
 	if len(cfg.Targets) == 0 {
 		targetMenu.Disable()
 	}
@@ -88,14 +88,14 @@ func (a *app) rebuild() {
 		}()
 	}
 
-	ctrlMenu := systray.AddMenuItem("Conectar em", "")
+	ctrlMenu := systray.AddMenuItem(tr("menu.connect_to"), "")
 	if len(cfg.Controllers) == 0 {
 		ctrlMenu.Disable()
 	}
 	for _, cp := range cfg.Controllers {
 		edgeLabel := cp.Edge
 		if edgeLabel == "" {
-			edgeLabel = "sempre compartilhar"
+			edgeLabel = tr("edge.always_share")
 		}
 		item := ctrlMenu.AddSubMenuItem(fmt.Sprintf("%s  (%s)", cp.Name, edgeLabel), "")
 		if runningCtrlName == cp.Name {
@@ -110,7 +110,7 @@ func (a *app) rebuild() {
 
 	systray.AddSeparator()
 
-	stopTarget := systray.AddMenuItem("Parar target", "")
+	stopTarget := systray.AddMenuItem(tr("menu.stop_target"), "")
 	if runningTargetName == "" {
 		stopTarget.Disable()
 	}
@@ -120,7 +120,7 @@ func (a *app) rebuild() {
 		}
 	}()
 
-	stopCtrl := systray.AddMenuItem("Parar controller", "")
+	stopCtrl := systray.AddMenuItem(tr("menu.stop_controller"), "")
 	if runningCtrlName == "" {
 		stopCtrl.Disable()
 	}
@@ -132,7 +132,7 @@ func (a *app) rebuild() {
 
 	systray.AddSeparator()
 
-	copyToken := systray.AddMenuItem("Copiar token do target", "")
+	copyToken := systray.AddMenuItem(tr("menu.copy_token"), "")
 	if len(cfg.Targets) == 0 {
 		copyToken.Disable()
 	}
@@ -156,7 +156,7 @@ func (a *app) rebuild() {
 		}
 	}()
 
-	editCfg := systray.AddMenuItem("Editar perfis (notepad)", "")
+	editCfg := systray.AddMenuItem(tr("menu.edit_profiles"), "")
 	go func() {
 		for range editCfg.ClickedCh {
 			a.mu.Lock()
@@ -168,20 +168,58 @@ func (a *app) rebuild() {
 		}
 	}()
 
-	reload := systray.AddMenuItem("Recarregar perfis", "")
+	reload := systray.AddMenuItem(tr("menu.reload_profiles"), "")
 	go func() {
 		for range reload.ClickedCh {
 			a.reloadConfig()
 		}
 	}()
 
+	// Language names are shown in their own language regardless of the
+	// current UI language (standard convention for a language picker) -
+	// someone who can't read the current language can still find their
+	// own by name.
+	langMenu := systray.AddMenuItem(tr("menu.language"), "")
+	langEnItem := langMenu.AddSubMenuItem("English", "")
+	langPtItem := langMenu.AddSubMenuItem("Português", "")
+	if currentLang == langEN {
+		langEnItem.Check()
+	} else {
+		langPtItem.Check()
+	}
+	go func() {
+		for range langEnItem.ClickedCh {
+			a.setLang(langEN)
+		}
+	}()
+	go func() {
+		for range langPtItem.ClickedCh {
+			a.setLang(langPT)
+		}
+	}()
+
 	systray.AddSeparator()
-	quit := systray.AddMenuItem("Sair", "")
+	quit := systray.AddMenuItem(tr("menu.quit"), "")
 	go func() {
 		for range quit.ClickedCh {
 			systray.Quit()
 		}
 	}()
+}
+
+// setLang switches the UI language, persists the choice to the profile
+// file, and redraws the menu with the new strings.
+func (a *app) setLang(l lang) {
+	setLang(l)
+	a.mu.Lock()
+	a.cfg.Lang = string(l)
+	cfg := a.cfg
+	path := a.cfgPath
+	a.mu.Unlock()
+	if err := saveConfig(path, cfg); err != nil {
+		log.Printf("saving language preference: %v", err)
+	}
+	a.rebuild()
 }
 
 func (a *app) startTarget(tp TargetProfile) {
@@ -230,7 +268,7 @@ func (a *app) startTarget(tp TargetProfile) {
 		a.rebuild()
 	}
 
-	proc, err := startProcess("target2.exe", args, onLine, onExit)
+	proc, err := startProcess("target.exe", args, onLine, onExit)
 	if err != nil {
 		log.Printf("start target %s: %v", tp.Name, err)
 		return
@@ -296,7 +334,7 @@ func (a *app) startController(cp ControllerProfile) {
 		a.rebuild()
 	}
 
-	proc, err := startProcess("controller2.exe", args, onLine, onExit)
+	proc, err := startProcess("controller.exe", args, onLine, onExit)
 	if err != nil {
 		log.Printf("start controller %s: %v", cp.Name, err)
 		return
@@ -327,6 +365,7 @@ func (a *app) reloadConfig() {
 		log.Printf("reload config: %v", err)
 		return
 	}
+	setLang(lang(cfg.Lang))
 	a.mu.Lock()
 	a.cfg = cfg
 	a.cfgPath = path

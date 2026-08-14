@@ -28,6 +28,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("loading config: %v", err)
 	}
+	setLang(lang(cfg.Lang))
 
 	a := &app{cfg: cfg, cfgPath: path}
 	systray.Run(a.onReady, a.onExit)

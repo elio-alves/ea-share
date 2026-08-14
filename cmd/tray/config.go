@@ -26,6 +26,9 @@ type ControllerProfile struct {
 }
 
 type Config struct {
+	// Lang is the tray UI language: "en" or "pt". Defaults to "en" when
+	// empty (e.g. a profile file saved before this field existed).
+	Lang        string              `json:"lang"`
 	Targets     []TargetProfile     `json:"targets"`
 	Controllers []ControllerProfile `json:"controllers"`
 }
@@ -38,17 +41,17 @@ func configPath() (string, error) {
 	return filepath.Join(dir, "kbs", "tray_profiles.json"), nil
 }
 
-// defaultConfig seeds the profile file with the setup already in use
-// between the two test machines, so the tray works immediately. Edit the
-// generated file (or use "Editar perfis") to add more machines or change
-// the token.
+// defaultConfig seeds the profile file with placeholder examples so the
+// menu isn't empty on first run. Edit the generated file (or use "Edit
+// profiles") to add your own machines and a real token.
 func defaultConfig() Config {
 	return Config{
+		Lang: string(langEN),
 		Targets: []TargetProfile{
-			{Name: "ELIO", Listen: ":7777", Token: "1234"},
+			{Name: "This PC", Listen: ":7777", Token: ""},
 		},
 		Controllers: []ControllerProfile{
-			{Name: "Outro PC", Connect: "192.168.1.16:7777", Token: "1234", Edge: "right"},
+			{Name: "Other PC", Connect: "192.168.1.50:7777", Token: "change-me", Edge: "right"},
 		},
 	}
 }
@@ -72,6 +75,9 @@ func loadConfig() (Config, string, error) {
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return Config{}, path, err
+	}
+	if cfg.Lang == "" {
+		cfg.Lang = string(langEN)
 	}
 	return cfg, path, nil
 }
