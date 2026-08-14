@@ -1,0 +1,55 @@
+name: Release
+
+# Triggered by pushing a version tag, e.g.:
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# Windows only for now (target.exe, controller.exe, tray.exe) - the
+# project's primary platform per ai-context.md. Linux artifacts can be
+# added as a parallel job later without touching this one.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release-windows:
+    name: build + publish (windows)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Vet
+        run: go vet -unsafeptr=false ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build windows binaries (target, controller, tray)
+        run: ./scripts/build.sh --os windows
+
+      - name: Package
+        id: package
+        run: |
+          version="${GITHUB_REF_NAME}"
+          out="ea-share-${version}-windows-amd64.zip"
+          cd bin
+          zip -j "../${out}" target.exe controller.exe tray.exe
+          cd ..
+          sha256sum "${out}" > "${out}.sha256"
+          echo "archive=${out}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.archive }}.sha256
+          generate_release_notes: true

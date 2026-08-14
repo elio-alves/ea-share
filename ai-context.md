@@ -25,6 +25,7 @@ always-share mode; macOS isn't implemented.
 | A bug that *looks* familiar (mouse freezes, clipboard won't paste, stuck key) | [`docs/known-issues.md`](docs/known-issues.md) — **check here before investigating from scratch** |
 | Running or writing a test, deciding whether something is testable | [`docs/testing.md`](docs/testing.md) |
 | Building for Windows/Linux | [`scripts/build.sh`](scripts/build.sh) |
+| Cutting a release (tag push -> GitHub Release, Windows only so far) | [`.github/workflows/release.yml`](.github/workflows/release.yml) |
 
 ## The 5 facts that are most expensive to rediscover
 
