@@ -4,7 +4,17 @@
 
 ```sh
 go test ./...
+go vet -unsafeptr=false ./...
 ```
+
+`-unsafeptr=false` disables just that one vet analyzer: this codebase
+talks to the Win32 API directly via `syscall.Proc.Call()`, which always
+returns a `uintptr` that then has to be cast to `unsafe.Pointer` - vet
+can't prove that's safe across the call boundary and flags it
+unconditionally on every such call. It's inherent to this style of
+raw-syscall code, not an actual bug (see
+[`docs/known-issues.md`](known-issues.md)). Plain `go vet ./...` will
+report these and exit non-zero.
 
 Runs on any OS (Linux, Windows) — the packages with automated tests today
 don't depend on any platform-specific API. A Linux CI can run the whole
