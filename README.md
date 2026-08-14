@@ -1,5 +1,7 @@
 # ea-share — reverse KVM
 
+[![CI](https://github.com/elio-alves/ea-share/actions/workflows/ci.yml/badge.svg)](https://github.com/elio-alves/ea-share/actions/workflows/ci.yml)
+
 Keyboard/mouse sharing "in reverse": instead of the machine hosting the
 physical keyboard acting as the server (Synergy/Barrier), here it's
 whichever machine **connects** that shares its keyboard/mouse.
