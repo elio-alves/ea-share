@@ -15,11 +15,12 @@ import (
 )
 
 // createNoWindow (CREATE_NO_WINDOW) stops Windows from popping up a
-// console for the spawned target.exe/controller.exe, which are ordinary
-// console-subsystem binaries.
+// console for the spawned ea-share-target.exe/ea-share-controller.exe,
+// which are ordinary console-subsystem binaries.
 const createNoWindow = 0x08000000
 
-// runningProc is a spawned target.exe or controller.exe under tray control.
+// runningProc is a spawned ea-share-target.exe or ea-share-controller.exe
+// under tray control.
 type runningProc struct {
 	cmd *exec.Cmd
 }
@@ -35,8 +36,9 @@ func (p *runningProc) Stop() {
 	p.cmd.Process.Kill()
 }
 
-// binPath resolves name (e.g. "target.exe") relative to the tray's own
-// executable directory, where the sibling CLI binaries are expected to live.
+// binPath resolves name (e.g. "ea-share-target.exe") relative to the
+// tray's own executable directory, where the sibling CLI binaries are
+// expected to live.
 func binPath(name string) (string, error) {
 	exe, err := os.Executable()
 	if err != nil {
@@ -47,12 +49,12 @@ func binPath(name string) (string, error) {
 
 // siblingBinaryName derives the sibling CLI binary's name from the tray's
 // own executable name, carrying over whatever suffix it was built with
-// (see scripts/build.sh --suffix): running as tray2.exe calls
-// target2.exe/controller2.exe, tray.exe calls target.exe/controller.exe.
-// Without this, a tray built under a suffix (the project's convention for
-// testing new work without disturbing an already-deployed session) would
-// silently keep spawning the unrelated, unsuffixed binaries sitting next
-// to it.
+// (see scripts/build.sh --suffix): running as ea-share-tray2.exe calls
+// ea-share-target2.exe/ea-share-controller2.exe, ea-share-tray.exe calls
+// ea-share-target.exe/ea-share-controller.exe. Without this, a tray built
+// under a suffix (the project's convention for testing new work without
+// disturbing an already-deployed session) would silently keep spawning
+// the unrelated, unsuffixed binaries sitting next to it.
 func siblingBinaryName(base string) string {
 	exe, err := os.Executable()
 	if err != nil {
@@ -60,7 +62,7 @@ func siblingBinaryName(base string) string {
 	}
 	trayName := filepath.Base(exe)
 	trayName = strings.TrimSuffix(trayName, filepath.Ext(trayName))
-	suffix := strings.TrimPrefix(trayName, "tray")
+	suffix := strings.TrimPrefix(trayName, "ea-share-tray")
 	return base + suffix + ".exe"
 }
 
@@ -74,7 +76,7 @@ func startProcess(exeName string, args []string, onLine func(string), onExit fun
 		return nil, err
 	}
 	if _, err := os.Stat(path); err != nil {
-		return nil, fmt.Errorf("%s not found next to tray.exe: %w", exeName, err)
+		return nil, fmt.Errorf("%s not found next to the tray executable: %w", exeName, err)
 	}
 
 	cmd := exec.Command(path, args...)

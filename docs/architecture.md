@@ -123,11 +123,12 @@ process shell: reads/writes `%AppData%\kbs\tray_profiles.json`, draws the
 menu (`fyne.io/systray`), and spawns sibling CLI binaries as hidden
 subprocesses (`CREATE_NO_WINDOW`), capturing their output to the log.
 The sibling binaries' names are derived from the tray's own executable
-name (`process.go:siblingBinaryName`) so a suffixed build (`tray2.exe`,
-see the parallel-build convention below) spawns the matching
-`target2.exe`/`controller2.exe`, not the unrelated v1 pair sitting next
-to it. See [`docs/known-issues.md`](known-issues.md) about the gap in
-`tray.exe`'s own crash logging.
+name (`process.go:siblingBinaryName`) so a suffixed build
+(`ea-share-tray2.exe`, see the parallel-build convention below) spawns
+the matching `ea-share-target2.exe`/`ea-share-controller2.exe`, not the
+unrelated v1 pair sitting next to it. See
+[`docs/known-issues.md`](known-issues.md) about the gap in
+`ea-share-tray.exe`'s own crash logging.
 
 **Connection status / start-stop toggle** (`menu.go`): each profile's
 menu item doubles as a switch - clicking it starts that profile if
@@ -157,8 +158,9 @@ embedded Windows manifest) to be present — see the `lxn/walk` entry in
 ## Development-parallel-build convention
 
 When a change might break a session already in use on both machines,
-build under a different name (`target2.exe`, `controller2.exe`,
-`tray2.exe`, via `scripts/build.sh --suffix 2`) instead of overwriting
+build under a different name (`ea-share-target2.exe`,
+`ea-share-controller2.exe`, `ea-share-tray2.exe`, via `scripts/build.sh
+--suffix 2`) instead of overwriting
 what's already running — that way it can be tested without dropping
 whoever's already connected. `cmd/tray` doesn't hardcode that suffix;
 it's a parallel-deployment practice, not a feature of the software.

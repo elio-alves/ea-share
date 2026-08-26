@@ -63,6 +63,7 @@ same way.
 When testing a change that could break a deployment already in use (two
 machines connected live), build under a suffix instead of overwriting the
 binary in use: `./scripts/build.sh --suffix 2` produces
-`target2.exe`/`controller2.exe`/`tray2.exe` alongside the originals. This
-isn't a permanent project convention — it's just to avoid dropping
-whoever's already connected while testing something new.
+`ea-share-target2.exe`/`ea-share-controller2.exe`/`ea-share-tray2.exe`
+alongside the originals. This isn't a permanent project convention —
+it's just to avoid dropping whoever's already connected while testing
+something new.

@@ -121,8 +121,8 @@ registration (`TTM_ADDTOOL`) silently fails unless the process has an
 embedded Windows application manifest declaring a dependency on Common
 Controls v6 (`Microsoft.Windows.Common-Controls`, version 6.0.0.0) -
 without it, Windows loads the ancient v5 common controls, and several
-modern control APIs (this one included) just fail. `tray.exe` never
-needed a manifest before this: `fyne.io/systray`'s tray icon + native
+modern control APIs (this one included) just fail. `ea-share-tray.exe`
+never needed a manifest before this: `fyne.io/systray`'s tray icon + native
 menu don't touch themed/tooltip controls at all. The moment the profile
 editor window (`cmd/tray/profile_editor_windows.go`) started using real
 `walk` widgets (`ListBox`, `LineEdit`, `ComboBox`, ...), the missing
@@ -149,13 +149,13 @@ picked up by the build. If it's ever lost/regenerated, re-run the
 produces no compile error and no crash a user can see, just a silently
 swallowed goroutine failure logged to a file most people never open.
 
-## `tray.log` doesn't capture `tray.exe`'s own crash
+## `tray.log` doesn't capture `ea-share-tray.exe`'s own crash
 
 **Status: identified, not yet fixed.**
 
 `tray.log` only captures child-process (`target`/`controller`) output via
-the `log` package's `log.SetOutput`. A panic/crash in `tray.exe` itself
-(which runs without a console, `-H=windowsgui`) goes nowhere — the last
+the `log` package's `log.SetOutput`. A panic/crash in `ea-share-tray.exe`
+itself (which runs without a console, `-H=windowsgui`) goes nowhere — the last
 line in the log before it disappears is always from a child process,
 never from the tray itself. This happened for real during an overnight
 sleep/hibernate: the child `target` process exited with an error, the

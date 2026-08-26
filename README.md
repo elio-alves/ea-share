@@ -27,12 +27,12 @@ network you don't control.
 ## Build
 
 ```sh
-go build -o bin/target.exe ./cmd/target        # Windows
-go build -o bin/controller.exe ./cmd/controller
-go build -ldflags "-H=windowsgui" -o bin/tray.exe ./cmd/tray   # no console on launch
+go build -o bin/ea-share-target.exe ./cmd/target        # Windows
+go build -o bin/ea-share-controller.exe ./cmd/controller
+go build -ldflags "-H=windowsgui" -o bin/ea-share-tray.exe ./cmd/tray   # no console on launch
 
-GOOS=linux GOARCH=amd64 go build -o bin/target ./cmd/target   # cross-compile for Linux
-GOOS=linux GOARCH=amd64 go build -o bin/controller ./cmd/controller
+GOOS=linux GOARCH=amd64 go build -o bin/ea-share-target ./cmd/target   # cross-compile for Linux
+GOOS=linux GOARCH=amd64 go build -o bin/ea-share-controller ./cmd/controller
 ```
 
 Or use `scripts/build.sh` (works run from Windows via Git Bash or from
@@ -40,7 +40,7 @@ Linux/CI — see [`scripts/build.sh`](scripts/build.sh)):
 
 ```sh
 ./scripts/build.sh              # target/controller (windows+linux) + tray (windows)
-./scripts/build.sh --suffix 2   # produces target2.exe/controller2.exe/tray2.exe, without overwriting a build already in use
+./scripts/build.sh --suffix 2   # produces ea-share-target2.exe/ea-share-controller2.exe/ea-share-tray2.exe, without overwriting a build already in use
 ```
 
 No dependency uses CGO — no gcc/mingw toolchain needed to build for
@@ -52,7 +52,7 @@ Windows or Linux, nor to cross-compile from one OS to the other. macOS is
 On the machine that will be controlled (`target`):
 
 ```sh
-./target -listen :7777
+./ea-share-target -listen :7777
 ```
 
 On first run it generates a self-signed certificate and, if you don't
@@ -70,7 +70,7 @@ On the controlling machine (`controller`), copying the token printed
 above:
 
 ```sh
-./controller -connect 192.168.1.50:7777 -token 4fa94c92cf6e96a878652410cb58fdb2b769beb7b88ac859
+./ea-share-controller -connect 192.168.1.50:7777 -token 4fa94c92cf6e96a878652410cb58fdb2b769beb7b88ac859
 ```
 
 On the first connection to an unknown `target`, the `controller` shows
@@ -93,7 +93,7 @@ opposite edge over there. Pushing back through the same edge returns
 control locally.
 
 ```sh
-./controller -connect 192.168.1.50:7777 -token ... -edge right   # target sits to the right, physically
+./ea-share-controller -connect 192.168.1.50:7777 -token ... -edge right   # target sits to the right, physically
 ```
 
 `-edge` is the side of the screen **where the target sits**, from the
@@ -201,21 +201,23 @@ movement keeps going over TCP as usual.
 
 ## System tray icon (`tray`)
 
-`tray.exe` is a graphical way to use `target`/`controller` without
-opening a terminal: an icon sits in the Windows system tray (near the
-clock) with a menu to start/stop each one from **saved profiles**.
+`ea-share-tray.exe` is a graphical way to use `target`/`controller`
+without opening a terminal: an icon sits in the Windows system tray
+(near the clock) with a menu to start/stop each one from **saved
+profiles**.
 
-- On first run, `tray.exe` creates `%AppData%\kbs\tray_profiles.json`
-  with one example profile of each kind. **Edit profiles** opens a
-  visual editor to add/edit/remove targets and controllers (name,
-  listen/connect, token, edge side, and the `-udp-mouse` performance-mode
-  toggle) — **Save** writes the changes, **Save & restart running**
-  saves and immediately restarts whichever target/controller is currently
-  active with the updated profile, without needing to stop/start by hand.
+- On first run, `ea-share-tray.exe` creates
+  `%AppData%\kbs\tray_profiles.json` with one example profile of each
+  kind. **Edit profiles** opens a visual editor to add/edit/remove
+  targets and controllers (name, listen/connect, token, edge side, and
+  the `-udp-mouse` performance-mode toggle) — **Save** writes the
+  changes, **Save & restart running** saves and immediately restarts
+  whichever target/controller is currently active with the updated
+  profile, without needing to stop/start by hand.
 - **Listen as target** / **Connect to** in the menu start the
-  corresponding process (hidden, no console window) using `target.exe` /
-  `controller.exe` — which need to be **in the same folder** as
-  `tray.exe`.
+  corresponding process (hidden, no console window) using
+  `ea-share-target.exe` / `ea-share-controller.exe` — which need to be
+  **in the same folder** as `ea-share-tray.exe`.
 - **Stop target** / **Stop controller** end the running process.
 - **Copy target token** copies it to the clipboard (to paste when
   creating the controller's profile on the other machine).

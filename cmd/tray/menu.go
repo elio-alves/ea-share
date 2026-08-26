@@ -388,7 +388,7 @@ func (a *app) startTarget(tp TargetProfile) {
 		a.rebuild()
 	}
 
-	proc, err := startProcess(siblingBinaryName("target"), args, onLine, onExit)
+	proc, err := startProcess(siblingBinaryName("ea-share-target"), args, onLine, onExit)
 	if err != nil {
 		log.Printf("start target %s: %v", tp.Name, err)
 		return
@@ -466,7 +466,7 @@ func (a *app) startController(cp ControllerProfile) {
 		a.rebuild()
 	}
 
-	proc, err := startProcess(siblingBinaryName("controller"), args, onLine, onExit)
+	proc, err := startProcess(siblingBinaryName("ea-share-controller"), args, onLine, onExit)
 	if err != nil {
 		log.Printf("start controller %s: %v", cp.Name, err)
 		return
@@ -522,7 +522,7 @@ func (a *app) saveGeneratedTargetToken(name, token string) {
 	}
 }
 
-// isLikelyToken reports whether s looks like the hex token target.exe
+// isLikelyToken reports whether s looks like the hex token ea-share-target
 // prints on its own line right after announcing it generated one.
 func isLikelyToken(s string) bool {
 	if len(s) < 16 {
