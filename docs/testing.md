@@ -29,6 +29,7 @@ OS-independent packages/files, covered with unit tests:
 |---|---|
 | `internal/protocol` | `WriteMessage`/`ReadMessage` round trip, size limit, truncated message, `Edge.Opposite()` |
 | `internal/clipsync` | `WriteFrame`/`ReadFrame` round trip, size limit, `ClipAddr` (port+1 derivation) |
+| `internal/mousesync` | `EncodePacket`/`DecodePacket` round trip, wrong key/tampered payload/wrong size rejected, `MouseAddr` (port+2 derivation) |
 | `internal/auth` | `TokensEqual` (equal, different, different length, empty) |
 | `internal/tlsutil` | certificate persistence, fingerprint format/determinism, `KnownHosts` (trust/lookup/disk persistence) |
 | `internal/keys` | `NameToVK`↔`VKToName` round trip (Windows) / `NameToKeycode`↔`KeycodeToName` (Linux), no code duplication — only the half matching the current OS runs |
@@ -74,6 +75,11 @@ No automated substitute for this today — run it after any change to
 6. If touching `internal/keys` or the key mappings: test at least one key
    from each category (letter, number, function, modifier, punctuation)
    arriving correctly on the other end.
+7. **`-udp-mouse`**: run the controller with it and confirm the cursor
+   still tracks smoothly while engaging/disengaging (compare against a
+   run without the flag). If easy to simulate, briefly block the UDP
+   port (main port + 2) mid-session and confirm mouse movement falls
+   back to TCP instead of the connection dying.
 
 ## `scripts/build.sh`
 

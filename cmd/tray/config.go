@@ -23,6 +23,10 @@ type ControllerProfile struct {
 	// Edge is left|right|top|bottom for edge-triggered switching, or ""
 	// for legacy always-share mode.
 	Edge string `json:"edge"`
+	// UDPMouse mirrors the controller's -udp-mouse flag: send mouse-move
+	// position over a dedicated UDP channel instead of TCP (performance
+	// mode). Only meaningful when Edge is set.
+	UDPMouse bool `json:"udp_mouse"`
 }
 
 type Config struct {

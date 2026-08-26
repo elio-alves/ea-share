@@ -27,12 +27,12 @@ network you don't control.
 ## Build
 
 ```sh
-go build -o bin/target.exe ./cmd/target        # Windows
-go build -o bin/controller.exe ./cmd/controller
-go build -ldflags "-H=windowsgui" -o bin/tray.exe ./cmd/tray   # no console on launch
+go build -o bin/ea-share-target.exe ./cmd/target        # Windows
+go build -o bin/ea-share-controller.exe ./cmd/controller
+go build -ldflags "-H=windowsgui" -o bin/ea-share-tray.exe ./cmd/tray   # no console on launch
 
-GOOS=linux GOARCH=amd64 go build -o bin/target ./cmd/target   # cross-compile for Linux
-GOOS=linux GOARCH=amd64 go build -o bin/controller ./cmd/controller
+GOOS=linux GOARCH=amd64 go build -o bin/ea-share-target ./cmd/target   # cross-compile for Linux
+GOOS=linux GOARCH=amd64 go build -o bin/ea-share-controller ./cmd/controller
 ```
 
 Or use `scripts/build.sh` (works run from Windows via Git Bash or from
@@ -40,7 +40,7 @@ Linux/CI — see [`scripts/build.sh`](scripts/build.sh)):
 
 ```sh
 ./scripts/build.sh              # target/controller (windows+linux) + tray (windows)
-./scripts/build.sh --suffix 2   # produces target2.exe/controller2.exe/tray2.exe, without overwriting a build already in use
+./scripts/build.sh --suffix 2   # produces ea-share-target2.exe/ea-share-controller2.exe/ea-share-tray2.exe, without overwriting a build already in use
 ```
 
 No dependency uses CGO — no gcc/mingw toolchain needed to build for
@@ -52,7 +52,7 @@ Windows or Linux, nor to cross-compile from one OS to the other. macOS is
 On the machine that will be controlled (`target`):
 
 ```sh
-./target -listen :7777
+./ea-share-target -listen :7777
 ```
 
 On first run it generates a self-signed certificate and, if you don't
@@ -70,7 +70,7 @@ On the controlling machine (`controller`), copying the token printed
 above:
 
 ```sh
-./controller -connect 192.168.1.50:7777 -token 4fa94c92cf6e96a878652410cb58fdb2b769beb7b88ac859
+./ea-share-controller -connect 192.168.1.50:7777 -token 4fa94c92cf6e96a878652410cb58fdb2b769beb7b88ac859
 ```
 
 On the first connection to an unknown `target`, the `controller` shows
@@ -93,7 +93,7 @@ opposite edge over there. Pushing back through the same edge returns
 control locally.
 
 ```sh
-./controller -connect 192.168.1.50:7777 -token ... -edge right   # target sits to the right, physically
+./ea-share-controller -connect 192.168.1.50:7777 -token ... -edge right   # target sits to the right, physically
 ```
 
 `-edge` is the side of the screen **where the target sits**, from the
@@ -116,6 +116,33 @@ is just forwarded like any other) — the special hotkey only swaps the
 TCP connection separate from the mouse/keyboard one (one port up), so a
 large screenshot never delays mouse movement.
 
+### Performance mode: UDP mouse channel (`-udp-mouse`)
+
+With `-edge` active, `-udp-mouse` moves the continuous stream of mouse
+*position* updates off the main TCP/TLS connection onto a dedicated UDP
+channel (main port + 2) — the same idea online games use to sync
+position: no retransmission, no head-of-line blocking, the newest packet
+always wins. Keyboard, buttons, wheel, engage/disengage, and the
+clipboard all keep using TCP exactly as before; only mouse movement
+while engaged moves to UDP.
+
+Each packet carries the controller's simulated absolute cursor position
+(not a relative delta) plus a sequence number, so a lost or reordered
+packet just means the target skips a frame — it never drifts out of
+sync waiting for a delta that's never coming. The channel isn't
+TLS-encrypted, but it isn't trust-free either: right after authenticating
+on the main connection, the target generates a random per-session key and
+sends it over that already-encrypted connection; every UDP packet is
+then HMAC-authenticated with that key, so it can't be forged or replayed
+from a past session. The token itself never touches the UDP channel.
+
+`-udp-mouse` requires `-edge` and needs the extra UDP port (main port + 2)
+reachable in addition to the TCP one — same VPN recommendation as the
+rest of [Security model](#security-model) applies on an untrusted
+network. If the channel can't be set up (port blocked, key never
+arrives), it's not fatal: the controller logs a warning and mouse
+movement keeps going over TCP as usual.
+
 ### Main flags
 
 | Flag (target) | Description |
@@ -130,6 +157,7 @@ large screenshot never delays mouse movement.
 | `-connect` | `host:port` of the target (required) |
 | `-token` | shared secret (or env `KBS_TOKEN`) |
 | `-edge` | `left\|right\|top\|bottom`: enables edge switching + clipboard; without it, always shares (legacy mode) |
+| `-udp-mouse` | performance mode: mouse-move position over a dedicated UDP channel instead of TCP (requires `-edge`); falls back to TCP if unavailable |
 | `-fingerprint` | pins the expected target fingerprint, skipping the prompt |
 | `-yes` | automatically trusts an unknown target, without asking |
 | `-known-hosts` | path to the trusted-fingerprints file |
@@ -173,20 +201,23 @@ large screenshot never delays mouse movement.
 
 ## System tray icon (`tray`)
 
-`tray.exe` is a graphical way to use `target`/`controller` without
-opening a terminal: an icon sits in the Windows system tray (near the
-clock) with a menu to start/stop each one from **saved profiles**.
+`ea-share-tray.exe` is a graphical way to use `target`/`controller`
+without opening a terminal: an icon sits in the Windows system tray
+(near the clock) with a menu to start/stop each one from **saved
+profiles**.
 
-- On first run, `tray.exe` creates `%AppData%\kbs\tray_profiles.json`
-  with one example profile of each kind. Edit that file (**Edit profiles
-  (notepad)** menu, then **Reload profiles**) to add your own machines:
-  `name`, `listen`/`token` for targets; `name`, `connect`/`token`/`edge`
-  for controllers (empty `edge` = legacy mode, always share, no edge
-  switching).
+- On first run, `ea-share-tray.exe` creates
+  `%AppData%\kbs\tray_profiles.json` with one example profile of each
+  kind. **Edit profiles** opens a visual editor to add/edit/remove
+  targets and controllers (name, listen/connect, token, edge side, and
+  the `-udp-mouse` performance-mode toggle) — **Save** writes the
+  changes, **Save & restart running** saves and immediately restarts
+  whichever target/controller is currently active with the updated
+  profile, without needing to stop/start by hand.
 - **Listen as target** / **Connect to** in the menu start the
-  corresponding process (hidden, no console window) using `target.exe` /
-  `controller.exe` — which need to be **in the same folder** as
-  `tray.exe`.
+  corresponding process (hidden, no console window) using
+  `ea-share-target.exe` / `ea-share-controller.exe` — which need to be
+  **in the same folder** as `ea-share-tray.exe`.
 - **Stop target** / **Stop controller** end the running process.
 - **Copy target token** copies it to the clipboard (to paste when
   creating the controller's profile on the other machine).
@@ -238,6 +269,7 @@ cmd/controller/        binary that connects and captures local events
 cmd/tray/               Windows system tray icon (saved profiles, no terminal)
 internal/protocol/     mouse/keyboard wire message format
 internal/clipsync/      shared-clipboard wire format + dedicated connection
+internal/mousesync/     UDP mouse-position channel wire format (-udp-mouse)
 internal/keys/          OS-independent key names + mappings
 internal/capture/       input capture (Windows/Linux/darwin-stub)
 internal/inject/        input injection (Windows/Linux/darwin-stub)

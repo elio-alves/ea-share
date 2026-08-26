@@ -6,14 +6,14 @@
 #
 # Usage:
 #   scripts/build.sh                    # target+controller (windows+linux), tray (windows)
-#   scripts/build.sh --suffix 2         # -> target2.exe, controller2.exe, tray2.exe
+#   scripts/build.sh --suffix 2         # -> ea-share-target2.exe, ea-share-controller2.exe, ea-share-tray2.exe
 #   scripts/build.sh --os windows       # windows only
 #   scripts/build.sh --os linux         # linux only (no tray: Windows-only)
 #   scripts/build.sh --skip-tray        # skip cmd/tray entirely
 #
 # --suffix is for testing a change without disrupting a deployment already
 # in use elsewhere: it builds under a different binary name instead of
-# overwriting bin/target.exe etc. See ai-context.md.
+# overwriting bin/ea-share-target.exe etc. See ai-context.md.
 
 set -euo pipefail
 
@@ -69,18 +69,18 @@ build() {
 }
 
 if [[ "$target_os" == "all" || "$target_os" == "windows" ]]; then
-	build windows target ./cmd/target
-	build windows controller ./cmd/controller
+	build windows ea-share-target ./cmd/target
+	build windows ea-share-controller ./cmd/controller
 	if [[ "$skip_tray" != true ]]; then
 		# -H=windowsgui: no console flash when double-clicked or launched
-		# by the shell (tray.exe has no terminal UI of its own).
-		build windows tray ./cmd/tray -ldflags "-H=windowsgui"
+		# by the shell (ea-share-tray.exe has no terminal UI of its own).
+		build windows ea-share-tray ./cmd/tray -ldflags "-H=windowsgui"
 	fi
 fi
 
 if [[ "$target_os" == "all" || "$target_os" == "linux" ]]; then
-	build linux target ./cmd/target
-	build linux controller ./cmd/controller
+	build linux ea-share-target ./cmd/target
+	build linux ea-share-controller ./cmd/controller
 	# cmd/tray is Windows-only (fyne.io/systray backend + CREATE_NO_WINDOW
 	# syscalls); nothing to build for Linux.
 fi

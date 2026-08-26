@@ -30,6 +30,7 @@ func main() {
 	yes := flag.Bool("yes", false, "automatically trust an unpinned target's certificate on first connect, without prompting")
 	knownHostsPath := flag.String("known-hosts", defaultKnownHostsPath(), "path to the trust-on-first-use store")
 	edgeFlag := flag.String("edge", "", "enable edge-triggered switching: left|right|top|bottom is the side the target's screen is on (Windows only; default: always share, no switching)")
+	udpMouse := flag.Bool("udp-mouse", false, "performance mode: send mouse-move position over a dedicated UDP channel instead of the main TCP connection (requires -edge; falls back to TCP if the channel can't be set up)")
 	flag.Parse()
 
 	if *addr == "" {
@@ -39,6 +40,10 @@ func main() {
 	}
 	if *token == "" {
 		fmt.Fprintln(os.Stderr, "error: -token (or KBS_TOKEN) is required")
+		os.Exit(2)
+	}
+	if *udpMouse && *edgeFlag == "" {
+		fmt.Fprintln(os.Stderr, "error: -udp-mouse requires -edge")
 		os.Exit(2)
 	}
 	var edge protocol.Edge
@@ -68,7 +73,7 @@ func main() {
 	}
 	defer conn.Close()
 
-	if err := protocol.WriteMessage(conn, protocol.Message{Type: protocol.MsgAuth, Token: *token}); err != nil {
+	if err := protocol.WriteMessage(conn, protocol.Message{Type: protocol.MsgAuth, Token: *token, UDPMouse: *udpMouse}); err != nil {
 		log.Fatalf("sending auth: %v", err)
 	}
 	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
@@ -94,7 +99,7 @@ func main() {
 				defer clip.Close()
 			}
 		}
-		if err := runEdgeAware(conn, edge, clip); err != nil {
+		if err := runEdgeAware(conn, edge, clip, *addr, *udpMouse); err != nil {
 			log.Fatalf("edge mode: %v", err)
 		}
 		return
