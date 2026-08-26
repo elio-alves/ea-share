@@ -5,11 +5,25 @@ package main
 import (
 	"fmt"
 	"log"
-	"os/exec"
 	"strings"
 	"sync"
 
 	"fyne.io/systray"
+)
+
+// connState is how far along a running target/controller's connection
+// currently is - used to show "listening" vs. "connected (TCP)" vs.
+// "connected (TCP+UDP)" in the tray instead of just a bare running/not
+// running checkmark. Derived by pattern-matching the process's own log
+// lines (see startTarget/startController's onLine) since neither binary
+// exposes this over any other channel today.
+type connState int
+
+const (
+	connNone    connState = iota // process not running at all
+	connWaiting                  // running, no peer connected/authenticated yet
+	connTCP                      // connected, TCP only
+	connUDP                      // connected, TCP + the UDP mouse channel
 )
 
 // app holds all tray state: the loaded profiles and whichever target/
@@ -21,8 +35,78 @@ type app struct {
 
 	runningTarget     *runningProc
 	runningTargetName string
+	runningTargetConn connState
 	runningCtrl       *runningProc
 	runningCtrlName   string
+	runningCtrlConn   connState
+
+	editorOpen bool // guards against opening a second profile editor window
+}
+
+// targetConnLabel/ctrlConnLabel turn a connState into the short status
+// text shown next to a running profile's name.
+func targetConnLabel(s connState) string {
+	switch s {
+	case connWaiting:
+		return tr("status.target_listening")
+	case connTCP:
+		return tr("status.connected_tcp")
+	case connUDP:
+		return tr("status.connected_udp")
+	default:
+		return ""
+	}
+}
+
+func ctrlConnLabel(s connState) string {
+	switch s {
+	case connWaiting:
+		return tr("status.ctrl_connecting")
+	case connTCP:
+		return tr("status.connected_tcp")
+	case connUDP:
+		return tr("status.connected_udp")
+	default:
+		return ""
+	}
+}
+
+// setTargetConn/upgradeTargetConnAtLeastTCP update the target's
+// connection state and redraw the menu. The "upgrade" variant is for the
+// "authenticated" log line, which always fires - but for a UDP-mouse
+// connection it fires *after* the "UDP mouse channel enabled" line (see
+// cmd/target/main.go:handleConn), so it must never downgrade an
+// already-detected connUDP back down to connTCP.
+func (a *app) setTargetConn(s connState) {
+	a.mu.Lock()
+	a.runningTargetConn = s
+	a.mu.Unlock()
+	a.rebuild()
+}
+
+func (a *app) upgradeTargetConnAtLeastTCP() {
+	a.mu.Lock()
+	if a.runningTargetConn == connWaiting || a.runningTargetConn == connNone {
+		a.runningTargetConn = connTCP
+	}
+	a.mu.Unlock()
+	a.rebuild()
+}
+
+func (a *app) setCtrlConn(s connState) {
+	a.mu.Lock()
+	a.runningCtrlConn = s
+	a.mu.Unlock()
+	a.rebuild()
+}
+
+func (a *app) upgradeCtrlConnAtLeastTCP() {
+	a.mu.Lock()
+	if a.runningCtrlConn == connWaiting || a.runningCtrlConn == connNone {
+		a.runningCtrlConn = connTCP
+	}
+	a.mu.Unlock()
+	a.rebuild()
 }
 
 func (a *app) onReady() {
@@ -50,17 +134,19 @@ func (a *app) rebuild() {
 	a.mu.Lock()
 	cfg := a.cfg
 	runningTargetName := a.runningTargetName
+	runningTargetConn := a.runningTargetConn
 	runningCtrlName := a.runningCtrlName
+	runningCtrlConn := a.runningCtrlConn
 	a.mu.Unlock()
 
 	systray.ResetMenu()
 
 	var statusParts []string
 	if runningTargetName != "" {
-		statusParts = append(statusParts, tr("status.listening_as", runningTargetName))
+		statusParts = append(statusParts, tr("status.listening_as", fmt.Sprintf("%s — %s", runningTargetName, targetConnLabel(runningTargetConn))))
 	}
 	if runningCtrlName != "" {
-		statusParts = append(statusParts, tr("status.controlling", runningCtrlName))
+		statusParts = append(statusParts, tr("status.controlling", fmt.Sprintf("%s — %s", runningCtrlName, ctrlConnLabel(runningCtrlConn))))
 	}
 	status := tr("status.stopped")
 	if len(statusParts) > 0 {
@@ -77,13 +163,29 @@ func (a *app) rebuild() {
 		targetMenu.Disable()
 	}
 	for _, tp := range cfg.Targets {
-		item := targetMenu.AddSubMenuItem(fmt.Sprintf("%s  (%s)", tp.Name, tp.Listen), "")
-		if runningTargetName == tp.Name {
+		running := runningTargetName == tp.Name
+		label := fmt.Sprintf("%s  (%s)", tp.Name, tp.Listen)
+		if running {
+			label = fmt.Sprintf("%s  — %s", tp.Name, targetConnLabel(runningTargetConn))
+		}
+		item := targetMenu.AddSubMenuItem(label, "")
+		if running {
 			item.Check()
 		}
 		go func() {
 			for range item.ClickedCh {
-				a.startTarget(tp)
+				// Toggle: clicking the profile that's currently running
+				// stops it instead of restarting it - same switch-like
+				// behavior as "Stop target", just reachable from the same
+				// item you started it from.
+				a.mu.Lock()
+				isRunning := a.runningTargetName == tp.Name
+				a.mu.Unlock()
+				if isRunning {
+					a.stopTarget()
+				} else {
+					a.startTarget(tp)
+				}
 			}
 		}()
 	}
@@ -93,17 +195,29 @@ func (a *app) rebuild() {
 		ctrlMenu.Disable()
 	}
 	for _, cp := range cfg.Controllers {
+		running := runningCtrlName == cp.Name
 		edgeLabel := cp.Edge
 		if edgeLabel == "" {
 			edgeLabel = tr("edge.always_share")
 		}
-		item := ctrlMenu.AddSubMenuItem(fmt.Sprintf("%s  (%s)", cp.Name, edgeLabel), "")
-		if runningCtrlName == cp.Name {
+		label := fmt.Sprintf("%s  (%s)", cp.Name, edgeLabel)
+		if running {
+			label = fmt.Sprintf("%s  — %s", cp.Name, ctrlConnLabel(runningCtrlConn))
+		}
+		item := ctrlMenu.AddSubMenuItem(label, "")
+		if running {
 			item.Check()
 		}
 		go func() {
 			for range item.ClickedCh {
-				a.startController(cp)
+				a.mu.Lock()
+				isRunning := a.runningCtrlName == cp.Name
+				a.mu.Unlock()
+				if isRunning {
+					a.stopController()
+				} else {
+					a.startController(cp)
+				}
 			}
 		}()
 	}
@@ -159,12 +273,7 @@ func (a *app) rebuild() {
 	editCfg := systray.AddMenuItem(tr("menu.edit_profiles"), "")
 	go func() {
 		for range editCfg.ClickedCh {
-			a.mu.Lock()
-			path := a.cfgPath
-			a.mu.Unlock()
-			if err := exec.Command("notepad.exe", path).Start(); err != nil {
-				log.Printf("open notepad: %v", err)
-			}
+			a.openProfileEditor()
 		}
 	}()
 
@@ -252,6 +361,16 @@ func (a *app) startTarget(tp TargetProfile) {
 				a.saveGeneratedTargetToken(tp.Name, trimmed)
 			}
 		}
+		switch {
+		case strings.Contains(trimmed, "UDP mouse channel enabled"):
+			a.setTargetConn(connUDP)
+		case strings.Contains(trimmed, "authenticated, now controlling this machine"):
+			a.upgradeTargetConnAtLeastTCP()
+		case strings.Contains(trimmed, "disconnected"),
+			strings.Contains(trimmed, "auth failed"),
+			strings.Contains(trimmed, "awaiting auth"):
+			a.setTargetConn(connWaiting)
+		}
 		log.Printf("[target %s] %s", tp.Name, trimmed)
 		systray.SetTooltip(fmt.Sprintf("kbs — target %s: %s", tp.Name, trimmed))
 	}
@@ -263,12 +382,13 @@ func (a *app) startTarget(tp TargetProfile) {
 		if a.runningTargetName == tp.Name {
 			a.runningTarget = nil
 			a.runningTargetName = ""
+			a.runningTargetConn = connNone
 		}
 		a.mu.Unlock()
 		a.rebuild()
 	}
 
-	proc, err := startProcess("target.exe", args, onLine, onExit)
+	proc, err := startProcess(siblingBinaryName("target"), args, onLine, onExit)
 	if err != nil {
 		log.Printf("start target %s: %v", tp.Name, err)
 		return
@@ -277,6 +397,7 @@ func (a *app) startTarget(tp TargetProfile) {
 	a.mu.Lock()
 	a.runningTarget = proc
 	a.runningTargetName = tp.Name
+	a.runningTargetConn = connWaiting
 	a.mu.Unlock()
 	a.rebuild()
 }
@@ -286,6 +407,7 @@ func (a *app) stopTarget() {
 	proc := a.runningTarget
 	a.runningTarget = nil
 	a.runningTargetName = ""
+	a.runningTargetConn = connNone
 	a.mu.Unlock()
 	if proc != nil {
 		proc.Stop()
@@ -312,11 +434,20 @@ func (a *app) startController(cp ControllerProfile) {
 	if cp.Edge != "" {
 		args = append(args, "-edge", cp.Edge)
 	}
+	if cp.UDPMouse {
+		args = append(args, "-udp-mouse")
+	}
 
 	onLine := func(line string) {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
 			return
+		}
+		switch {
+		case strings.Contains(trimmed, "UDP mouse channel active"):
+			a.setCtrlConn(connUDP)
+		case strings.Contains(trimmed, "Connected and authenticated to"):
+			a.upgradeCtrlConnAtLeastTCP()
 		}
 		log.Printf("[controller %s] %s", cp.Name, trimmed)
 		systray.SetTooltip(fmt.Sprintf("kbs — %s: %s", cp.Name, trimmed))
@@ -329,12 +460,13 @@ func (a *app) startController(cp ControllerProfile) {
 		if a.runningCtrlName == cp.Name {
 			a.runningCtrl = nil
 			a.runningCtrlName = ""
+			a.runningCtrlConn = connNone
 		}
 		a.mu.Unlock()
 		a.rebuild()
 	}
 
-	proc, err := startProcess("controller.exe", args, onLine, onExit)
+	proc, err := startProcess(siblingBinaryName("controller"), args, onLine, onExit)
 	if err != nil {
 		log.Printf("start controller %s: %v", cp.Name, err)
 		return
@@ -343,6 +475,7 @@ func (a *app) startController(cp ControllerProfile) {
 	a.mu.Lock()
 	a.runningCtrl = proc
 	a.runningCtrlName = cp.Name
+	a.runningCtrlConn = connWaiting
 	a.mu.Unlock()
 	a.rebuild()
 }
@@ -352,6 +485,7 @@ func (a *app) stopController() {
 	proc := a.runningCtrl
 	a.runningCtrl = nil
 	a.runningCtrlName = ""
+	a.runningCtrlConn = connNone
 	a.mu.Unlock()
 	if proc != nil {
 		proc.Stop()

@@ -6,6 +6,7 @@ package main
 import (
 	"crypto/rand"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/hex"
 	"flag"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"kbs/internal/auth"
 	"kbs/internal/inject"
 	"kbs/internal/keys"
+	"kbs/internal/mousesync"
 	"kbs/internal/protocol"
 	"kbs/internal/tlsutil"
 )
@@ -56,6 +58,11 @@ func main() {
 
 	if err := startClipboardListener(cert, *listenAddr, injector, *token); err != nil {
 		log.Printf("clipboard sync unavailable: %v", err)
+	}
+
+	udpSess := &udpMouseSession{}
+	if err := startMouseUDPListener(*listenAddr, udpSess); err != nil {
+		log.Printf("UDP mouse channel unavailable: %v", err)
 	}
 
 	ln, err := tls.Listen("tcp", *listenAddr, &tls.Config{
@@ -115,7 +122,7 @@ func main() {
 		mu.Unlock()
 
 		go func() {
-			handleConn(conn, injector, *token)
+			handleConn(conn, injector, *token, udpSess)
 			mu.Lock()
 			active = nil
 			mu.Unlock()
@@ -123,7 +130,7 @@ func main() {
 	}
 }
 
-func handleConn(conn net.Conn, injector inject.Injector, token string) {
+func handleConn(conn net.Conn, injector inject.Injector, token string, udpSess *udpMouseSession) {
 	defer conn.Close()
 	remote := conn.RemoteAddr()
 	log.Printf("connection from %s: awaiting auth", remote)
@@ -142,6 +149,14 @@ func handleConn(conn net.Conn, injector inject.Injector, token string) {
 	w, h := ownScreenBounds()
 	if err := protocol.WriteMessage(conn, protocol.Message{Type: protocol.MsgScreenInfo, Width: w, Height: h}); err != nil {
 		return
+	}
+	if m.UDPMouse {
+		if err := enableUDPMouse(conn, udpSess); err != nil {
+			log.Printf("connection from %s: UDP mouse channel not started: %v", remote, err)
+		} else {
+			defer udpSess.stop()
+			log.Printf("connection from %s: UDP mouse channel enabled", remote)
+		}
 	}
 	log.Printf("connection from %s: authenticated, now controlling this machine", remote)
 	defer log.Printf("connection from %s: disconnected", remote)
@@ -224,6 +239,116 @@ func randomToken() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// udpMouseSession holds the state for the optional UDP mouse-position
+// channel (-udp-mouse on the controller, performance mode): the current
+// authenticated connection's per-session key, and the highest sequence
+// number applied so far. There is only ever at most one target
+// connection active at a time (see the accept loop in main), so one
+// shared session is enough.
+type udpMouseSession struct {
+	mu      sync.Mutex
+	key     []byte
+	lastSeq uint64
+}
+
+func (s *udpMouseSession) start(key []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.key = key
+	s.lastSeq = 0
+}
+
+func (s *udpMouseSession) stop() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.key = nil
+}
+
+// apply decodes buf and, if it authenticates and is newer than the last
+// packet applied, warps the cursor to the position it reports. Invalid,
+// unauthenticated, or stale/duplicate/out-of-order packets are silently
+// dropped - there is no reliable channel behind this one to complain on,
+// and a dropped position update is harmless: the next (newer) one
+// supersedes it. Called from a single reader goroutine (serveMouseUDP),
+// so packets are applied strictly in receive order.
+func (s *udpMouseSession) apply(buf []byte) {
+	s.mu.Lock()
+	if s.key == nil {
+		s.mu.Unlock()
+		return
+	}
+	seq, x, y, ok := mousesync.DecodePacket(s.key, buf)
+	if !ok || seq <= s.lastSeq {
+		s.mu.Unlock()
+		return
+	}
+	s.lastSeq = seq
+	s.mu.Unlock()
+
+	if err := warpCursor(x, y); err != nil {
+		log.Printf("UDP mouse: warping cursor: %v", err)
+	}
+}
+
+// enableUDPMouse generates a fresh session key, arms sess with it, and
+// sends it to the controller as MsgUDPKey over conn (the already
+// authenticated TCP/TLS connection) so the UDP channel never has to
+// carry any long-lived secret itself.
+func enableUDPMouse(conn net.Conn, sess *udpMouseSession) error {
+	key := make([]byte, mousesync.KeySize)
+	if _, err := rand.Read(key); err != nil {
+		return fmt.Errorf("generating key: %w", err)
+	}
+	sess.start(key)
+	if err := protocol.WriteMessage(conn, protocol.Message{
+		Type:   protocol.MsgUDPKey,
+		UDPKey: base64.StdEncoding.EncodeToString(key),
+	}); err != nil {
+		sess.stop()
+		return fmt.Errorf("sending key: %w", err)
+	}
+	return nil
+}
+
+// startMouseUDPListener opens the UDP socket for the mouse-position
+// channel (main listen port + 2, see mousesync.MouseAddr) and starts
+// reading from it in the background. It's opened unconditionally at
+// startup, like the clipboard's TCP listener - whether it's ever used
+// depends entirely on whether a connecting controller requests it via
+// MsgAuth.UDPMouse.
+func startMouseUDPListener(listenAddr string, sess *udpMouseSession) error {
+	udpAddr, err := mousesync.MouseAddr(listenAddr)
+	if err != nil {
+		return err
+	}
+	addr, err := net.ResolveUDPAddr("udp", udpAddr)
+	if err != nil {
+		return err
+	}
+	conn, err := net.ListenUDP("udp", addr)
+	if err != nil {
+		return err
+	}
+	go serveMouseUDP(conn, sess)
+	return nil
+}
+
+func serveMouseUDP(conn *net.UDPConn, sess *udpMouseSession) {
+	defer conn.Close()
+	buf := make([]byte, mousesync.PacketSize+1) // +1 so an oversized/garbage packet is detected, not silently truncated
+	for {
+		n, _, err := conn.ReadFromUDP(buf)
+		if err != nil {
+			log.Printf("UDP mouse: read: %v", err)
+			return
+		}
+		if n != mousesync.PacketSize {
+			continue
+		}
+		sess.apply(buf[:n])
+	}
 }
 
 func defaultDataDir() string {

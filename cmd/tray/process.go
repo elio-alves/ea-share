@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 )
@@ -42,6 +43,25 @@ func binPath(name string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(filepath.Dir(exe), name), nil
+}
+
+// siblingBinaryName derives the sibling CLI binary's name from the tray's
+// own executable name, carrying over whatever suffix it was built with
+// (see scripts/build.sh --suffix): running as tray2.exe calls
+// target2.exe/controller2.exe, tray.exe calls target.exe/controller.exe.
+// Without this, a tray built under a suffix (the project's convention for
+// testing new work without disturbing an already-deployed session) would
+// silently keep spawning the unrelated, unsuffixed binaries sitting next
+// to it.
+func siblingBinaryName(base string) string {
+	exe, err := os.Executable()
+	if err != nil {
+		return base + ".exe"
+	}
+	trayName := filepath.Base(exe)
+	trayName = strings.TrimSuffix(trayName, filepath.Ext(trayName))
+	suffix := strings.TrimPrefix(trayName, "tray")
+	return base + suffix + ".exe"
 }
 
 // startProcess launches exeName with args, hidden (no console window),

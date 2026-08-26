@@ -116,6 +116,33 @@ is just forwarded like any other) — the special hotkey only swaps the
 TCP connection separate from the mouse/keyboard one (one port up), so a
 large screenshot never delays mouse movement.
 
+### Performance mode: UDP mouse channel (`-udp-mouse`)
+
+With `-edge` active, `-udp-mouse` moves the continuous stream of mouse
+*position* updates off the main TCP/TLS connection onto a dedicated UDP
+channel (main port + 2) — the same idea online games use to sync
+position: no retransmission, no head-of-line blocking, the newest packet
+always wins. Keyboard, buttons, wheel, engage/disengage, and the
+clipboard all keep using TCP exactly as before; only mouse movement
+while engaged moves to UDP.
+
+Each packet carries the controller's simulated absolute cursor position
+(not a relative delta) plus a sequence number, so a lost or reordered
+packet just means the target skips a frame — it never drifts out of
+sync waiting for a delta that's never coming. The channel isn't
+TLS-encrypted, but it isn't trust-free either: right after authenticating
+on the main connection, the target generates a random per-session key and
+sends it over that already-encrypted connection; every UDP packet is
+then HMAC-authenticated with that key, so it can't be forged or replayed
+from a past session. The token itself never touches the UDP channel.
+
+`-udp-mouse` requires `-edge` and needs the extra UDP port (main port + 2)
+reachable in addition to the TCP one — same VPN recommendation as the
+rest of [Security model](#security-model) applies on an untrusted
+network. If the channel can't be set up (port blocked, key never
+arrives), it's not fatal: the controller logs a warning and mouse
+movement keeps going over TCP as usual.
+
 ### Main flags
 
 | Flag (target) | Description |
@@ -130,6 +157,7 @@ large screenshot never delays mouse movement.
 | `-connect` | `host:port` of the target (required) |
 | `-token` | shared secret (or env `KBS_TOKEN`) |
 | `-edge` | `left\|right\|top\|bottom`: enables edge switching + clipboard; without it, always shares (legacy mode) |
+| `-udp-mouse` | performance mode: mouse-move position over a dedicated UDP channel instead of TCP (requires `-edge`); falls back to TCP if unavailable |
 | `-fingerprint` | pins the expected target fingerprint, skipping the prompt |
 | `-yes` | automatically trusts an unknown target, without asking |
 | `-known-hosts` | path to the trusted-fingerprints file |
@@ -178,11 +206,12 @@ opening a terminal: an icon sits in the Windows system tray (near the
 clock) with a menu to start/stop each one from **saved profiles**.
 
 - On first run, `tray.exe` creates `%AppData%\kbs\tray_profiles.json`
-  with one example profile of each kind. Edit that file (**Edit profiles
-  (notepad)** menu, then **Reload profiles**) to add your own machines:
-  `name`, `listen`/`token` for targets; `name`, `connect`/`token`/`edge`
-  for controllers (empty `edge` = legacy mode, always share, no edge
-  switching).
+  with one example profile of each kind. **Edit profiles** opens a
+  visual editor to add/edit/remove targets and controllers (name,
+  listen/connect, token, edge side, and the `-udp-mouse` performance-mode
+  toggle) — **Save** writes the changes, **Save & restart running**
+  saves and immediately restarts whichever target/controller is currently
+  active with the updated profile, without needing to stop/start by hand.
 - **Listen as target** / **Connect to** in the menu start the
   corresponding process (hidden, no console window) using `target.exe` /
   `controller.exe` — which need to be **in the same folder** as
@@ -238,6 +267,7 @@ cmd/controller/        binary that connects and captures local events
 cmd/tray/               Windows system tray icon (saved profiles, no terminal)
 internal/protocol/     mouse/keyboard wire message format
 internal/clipsync/      shared-clipboard wire format + dedicated connection
+internal/mousesync/     UDP mouse-position channel wire format (-udp-mouse)
 internal/keys/          OS-independent key names + mappings
 internal/capture/       input capture (Windows/Linux/darwin-stub)
 internal/inject/        input injection (Windows/Linux/darwin-stub)

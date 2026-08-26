@@ -108,6 +108,47 @@ implementation gap. Running as Administrator helps with common elevation
 (UAC); there's no reasonable way (or need) to go as far as SYSTEM just
 for this.
 
+## `lxn/walk` windows fail silently without an embedded manifest
+
+**Symptom**: clicking "Edit profiles" in the tray menu did nothing
+visible - no window, no error dialog, nothing. `tray.log` showed a Go
+panic-style stack trace ending in `TTM_ADDTOOL failed`, from deep inside
+`walk.(*WidgetBase).init` → `walk.(*ToolTip).AddTool`.
+
+**Cause**: every `lxn/walk` widget registers itself with an internal
+shared tooltip control during construction (`WidgetBase.init`). That
+registration (`TTM_ADDTOOL`) silently fails unless the process has an
+embedded Windows application manifest declaring a dependency on Common
+Controls v6 (`Microsoft.Windows.Common-Controls`, version 6.0.0.0) -
+without it, Windows loads the ancient v5 common controls, and several
+modern control APIs (this one included) just fail. `tray.exe` never
+needed a manifest before this: `fyne.io/systray`'s tray icon + native
+menu don't touch themed/tooltip controls at all. The moment the profile
+editor window (`cmd/tray/profile_editor_windows.go`) started using real
+`walk` widgets (`ListBox`, `LineEdit`, `ComboBox`, ...), the missing
+manifest became a hard blocker - and because window creation runs in its
+own goroutine (see "Threading" in `docs/architecture.md`), the failure
+never reached the console (there isn't one, `-H=windowsgui`) and only
+showed up as a `log.Printf` line in `tray.log`, easy to miss.
+
+**Fix**: `cmd/tray/rsrc_windows_amd64.syso`, a Windows resource file
+generated with [`go-winres`](https://github.com/tc-hib/go-winres)
+(`go-winres simply --arch amd64 --manifest gui --out
+cmd/tray/rsrc`), declaring the Common Controls v6 dependency. Go's
+linker embeds any `*.syso` file sitting in a package directory
+automatically - no CGO, no C toolchain, nothing to change in
+`scripts/build.sh`. Confirmed via a throwaway repro package building the
+exact same widget shapes (`ListBox`+`Composite{Layout: Grid}`+
+`LineEdit`) with and without the `.syso` present: `TTM_ADDTOOL failed`
+without it, clean window creation with it.
+
+**Lesson**: any future `cmd/tray` code that constructs `lxn/walk`
+widgets depends on `rsrc_windows_amd64.syso` staying committed and
+picked up by the build. If it's ever lost/regenerated, re-run the
+`go-winres` command above from the repo root - a missing manifest
+produces no compile error and no crash a user can see, just a silently
+swallowed goroutine failure logged to a file most people never open.
+
 ## `tray.log` doesn't capture `tray.exe`'s own crash
 
 **Status: identified, not yet fixed.**

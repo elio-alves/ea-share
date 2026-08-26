@@ -9,6 +9,6 @@ import (
 	"kbs/internal/protocol"
 )
 
-func runEdgeAware(conn net.Conn, edge protocol.Edge, clip *clipClient) error {
+func runEdgeAware(conn net.Conn, edge protocol.Edge, clip *clipClient, mainAddr string, udpMouse bool) error {
 	return errors.New("-edge is only supported on Windows right now")
 }

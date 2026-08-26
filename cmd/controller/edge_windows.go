@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log"
@@ -12,9 +13,73 @@ import (
 	"syscall"
 
 	"kbs/internal/capture"
+	"kbs/internal/mousesync"
 	"kbs/internal/protocol"
 	"kbs/internal/screen"
 )
+
+// udpMouseClient is the controller's side of the optional UDP
+// mouse-position channel (-udp-mouse, performance mode): a dedicated,
+// unreliable connection carrying only the simulated absolute cursor
+// position (vx, vy) plus a sequence number, authenticated with a
+// per-session key handed over the main TLS connection (MsgUDPKey). See
+// internal/mousesync for why absolute position rather than deltas.
+type udpMouseClient struct {
+	conn *net.UDPConn
+	key  []byte
+	seq  uint64
+}
+
+func dialUDPMouse(mainAddr string, key []byte) (*udpMouseClient, error) {
+	udpAddr, err := mousesync.MouseAddr(mainAddr)
+	if err != nil {
+		return nil, err
+	}
+	addr, err := net.ResolveUDPAddr("udp", udpAddr)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := net.DialUDP("udp", nil, addr)
+	if err != nil {
+		return nil, err
+	}
+	return &udpMouseClient{conn: conn, key: key}, nil
+}
+
+func (c *udpMouseClient) sendPosition(x, y int32) error {
+	c.seq++
+	_, err := c.conn.Write(mousesync.EncodePacket(c.key, c.seq, x, y))
+	return err
+}
+
+func (c *udpMouseClient) Close() error {
+	return c.conn.Close()
+}
+
+// negotiateUDPMouse reads the MsgUDPKey the target sends (only if it saw
+// UDPMouse:true in MsgAuth) and dials the UDP channel. Any failure along
+// the way just means performance mode stays off for this session - it's
+// never fatal, mirroring how clipboard sync degrades to "unavailable"
+// rather than aborting the connection.
+func negotiateUDPMouse(conn net.Conn, mainAddr string) *udpMouseClient {
+	m, err := protocol.ReadMessage(conn)
+	if err != nil || m.Type != protocol.MsgUDPKey {
+		log.Printf("UDP mouse channel (performance mode): target didn't send a key, staying on TCP")
+		return nil
+	}
+	key, err := base64.StdEncoding.DecodeString(m.UDPKey)
+	if err != nil {
+		log.Printf("UDP mouse channel: decoding key: %v", err)
+		return nil
+	}
+	c, err := dialUDPMouse(mainAddr, key)
+	if err != nil {
+		log.Printf("UDP mouse channel: dialing: %v", err)
+		return nil
+	}
+	log.Print("UDP mouse channel active (performance mode)")
+	return c
+}
 
 // runEdgeAware implements Synergy-style edge switching: local input passes
 // through untouched until the cursor reaches the configured edge, at which
@@ -23,7 +88,7 @@ import (
 // screen size and the deltas we've sent) so that pushing back past the
 // same entry edge hands control back, with no extra network round trip
 // needed to detect the release.
-func runEdgeAware(conn net.Conn, edge protocol.Edge, clip *clipClient) error {
+func runEdgeAware(conn net.Conn, edge protocol.Edge, clip *clipClient, mainAddr string, udpMouseRequested bool) error {
 	m, err := protocol.ReadMessage(conn)
 	if err != nil {
 		return fmt.Errorf("reading target screen info: %w", err)
@@ -34,6 +99,14 @@ func runEdgeAware(conn net.Conn, edge protocol.Edge, clip *clipClient) error {
 	targetW, targetH := m.Width, m.Height
 	if targetW <= 0 || targetH <= 0 {
 		return fmt.Errorf("target reported invalid screen size %dx%d", targetW, targetH)
+	}
+
+	var udpMouse *udpMouseClient
+	if udpMouseRequested {
+		udpMouse = negotiateUDPMouse(conn, mainAddr)
+		if udpMouse != nil {
+			defer udpMouse.Close()
+		}
 	}
 
 	controllerBounds := screen.GetBounds()
@@ -100,8 +173,21 @@ func runEdgeAware(conn net.Conn, edge protocol.Edge, clip *clipClient) error {
 			if !pushingOutEntry && !movedAway {
 				movedAway = hasMovedAway(entryEdge, vx, vy, targetW, targetH)
 			}
-			if err := protocol.WriteMessage(conn, protocol.Message{Type: protocol.MsgMouseMove, DX: e.DX, DY: e.DY}); err != nil {
-				return fmt.Errorf("connection lost: %w", err)
+
+			sentOverUDP := false
+			if udpMouse != nil {
+				if err := udpMouse.sendPosition(vx, vy); err != nil {
+					log.Printf("UDP mouse channel: %v — falling back to TCP for the rest of this session", err)
+					udpMouse.Close()
+					udpMouse = nil
+				} else {
+					sentOverUDP = true
+				}
+			}
+			if !sentOverUDP {
+				if err := protocol.WriteMessage(conn, protocol.Message{Type: protocol.MsgMouseMove, DX: e.DX, DY: e.DY}); err != nil {
+					return fmt.Errorf("connection lost: %w", err)
+				}
 			}
 
 		case capture.KeyEvent:

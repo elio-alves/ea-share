@@ -37,6 +37,12 @@ const (
 	// cursor to the corresponding entry position and start expecting a
 	// stream of relative moves.
 	MsgEngage MsgType = "engage"
+
+	// MsgUDPKey is sent target->controller right after MsgScreenInfo,
+	// only when MsgAuth requested UDPMouse: a fresh per-session key
+	// (base64) the controller must use to authenticate mouse-position
+	// packets on the dedicated UDP channel (see internal/mousesync).
+	MsgUDPKey MsgType = "udp_key"
 )
 
 // Edge identifies one side of a screen, used by MsgEngage to say which
@@ -75,6 +81,11 @@ type Message struct {
 
 	// MsgAuth
 	Token string `json:"token,omitempty"`
+	// MsgAuth: set by the controller to request the dedicated UDP
+	// mouse-position channel (performance mode, -edge only). If the
+	// target doesn't see this, it never sends MsgUDPKey and the
+	// controller must keep sending MsgMouseMove over this connection.
+	UDPMouse bool `json:"udp_mouse,omitempty"`
 
 	// MsgKey: Key is a name from the keys package (e.g. "A", "Enter").
 	Key  string `json:"key,omitempty"`
@@ -98,6 +109,9 @@ type Message struct {
 	// and how far along that edge (0.0-1.0) it crossed.
 	Edge   Edge    `json:"edge,omitempty"`
 	RelPos float64 `json:"rel_pos,omitempty"`
+
+	// MsgUDPKey: base64-encoded per-session key for the UDP mouse channel.
+	UDPKey string `json:"udp_key,omitempty"`
 }
 
 // WriteMessage frames m as a 4-byte big-endian length prefix followed by
