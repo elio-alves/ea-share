@@ -27,7 +27,7 @@ permissions:
 jobs:
   release-windows:
     name: build + publish (windows)
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Windows, X64]
     steps:
       - uses: actions/checkout@v4
 
@@ -36,22 +36,26 @@ jobs:
           go-version-file: go.mod
 
       - name: Vet
+        shell: bash
         run: go vet -unsafeptr=false ./...
 
       - name: Test
+        shell: bash
         run: go test ./...
 
       - name: Build windows binaries (target, controller, tray)
+        shell: bash
         run: ./scripts/build.sh --os windows
 
       - name: Package
         id: package
+        shell: bash
         run: |
           version="${GITHUB_REF_NAME}"
           out="ea-share-${version}-windows-amd64.zip"
-          cd bin
-          zip -j "../${out}" ea-share-target.exe ea-share-controller.exe ea-share-tray.exe
-          cd ..
+          # zip(1) isn't installed on the self-hosted runner; Compress-Archive
+          # is always available on Windows and produces an equivalent zip.
+          powershell.exe -NoProfile -Command "Compress-Archive -Path 'bin/ea-share-target.exe','bin/ea-share-controller.exe','bin/ea-share-tray.exe' -DestinationPath '${out}' -Force"
           sha256sum "${out}" > "${out}.sha256"
           echo "archive=${out}" >> "$GITHUB_OUTPUT"
 
