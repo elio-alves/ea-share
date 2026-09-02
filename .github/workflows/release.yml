@@ -31,6 +31,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Ensure Git Bash is on PATH
+        # The self-hosted runner service's PATH doesn't include Git's bin
+        # dir, so `shell: bash` steps below can't find bash.exe otherwise.
+        shell: pwsh
+        run: echo "C:\Program Files\Git\bin" >> $env:GITHUB_PATH
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
