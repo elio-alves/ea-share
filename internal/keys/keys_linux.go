@@ -100,6 +100,22 @@ const (
 
 	keyLeftmeta  = 125
 	keyRightmeta = 126
+
+	keyKp7        = 71
+	keyKp8        = 72
+	keyKp9        = 73
+	keyKpminus    = 74
+	keyKp4        = 75
+	keyKp5        = 76
+	keyKp6        = 77
+	keyKpplus     = 78
+	keyKp1        = 79
+	keyKp2        = 80
+	keyKp3        = 81
+	keyKp0        = 82
+	keyKpdot      = 83
+	keyKpasterisk = 55
+	keyKpslash    = 98
 )
 
 // NameToKeycode maps a platform-independent key name to its Linux keycode.
@@ -153,14 +169,39 @@ var NameToKeycode = map[Name]int{
 	Period:       keyDot,
 	Slash:        keySlash,
 	Grave:        keyGrave,
+
+	NumPadAdd:      keyKpplus,
+	NumPadSubtract: keyKpminus,
+	NumPadMultiply: keyKpasterisk,
+	NumPadDivide:   keyKpslash,
 }
 
 // KeycodeToName maps a Linux keycode back to its platform-independent name.
 var KeycodeToName map[int]Name
 
 func init() {
-	KeycodeToName = make(map[int]Name, len(NameToKeycode))
+	KeycodeToName = make(map[int]Name, len(NameToKeycode)+11)
 	for name, code := range NameToKeycode {
 		KeycodeToName[code] = name
 	}
+
+	// Same reasoning as keys_windows.go's init(): the keypad digit/decimal
+	// keycodes alias to Home/End/arrows/etc depending on NumLock, and a
+	// target's translation of KEY_KP0-9/KEY_KPDOT into a character
+	// similarly depends on NumLock wherever that happens on the target -
+	// so forward these as the ordinary top-row digits/period instead of
+	// a separate NumPad identity, and injecting never has to touch
+	// NumLock at all. The keypad +-*/ keys have no alternate meaning and
+	// stay distinct (see NameToKeycode above).
+	KeycodeToName[keyKp0] = N0
+	KeycodeToName[keyKp1] = N1
+	KeycodeToName[keyKp2] = N2
+	KeycodeToName[keyKp3] = N3
+	KeycodeToName[keyKp4] = N4
+	KeycodeToName[keyKp5] = N5
+	KeycodeToName[keyKp6] = N6
+	KeycodeToName[keyKp7] = N7
+	KeycodeToName[keyKp8] = N8
+	KeycodeToName[keyKp9] = N9
+	KeycodeToName[keyKpdot] = Period
 }

@@ -94,4 +94,15 @@ const (
 	Period       Name = "Period"
 	Slash        Name = "Slash"
 	Grave        Name = "Grave"
+
+	// NumPadAdd/Subtract/Multiply/Divide are the dedicated keypad operator
+	// keys - unlike the keypad digits and decimal point (which alias to
+	// navigation keys depending on NumLock, and are folded into N0-N9/
+	// Period instead, see keys_windows.go/keys_linux.go), +-*/ on the
+	// keypad have no alternate meaning and always produce that operator
+	// regardless of NumLock, so they're forwarded as their own keys.
+	NumPadAdd      Name = "NumPadAdd"
+	NumPadSubtract Name = "NumPadSubtract"
+	NumPadMultiply Name = "NumPadMultiply"
+	NumPadDivide   Name = "NumPadDivide"
 )

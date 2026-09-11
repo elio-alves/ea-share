@@ -46,6 +46,13 @@ const (
 	vkOEM5      = 0xDC // \|
 	vkOEM6      = 0xDD // ]}
 	vkOEM7      = 0xDE // '"
+
+	vkNumpad0  = 0x60
+	vkMultiply = 0x6A
+	vkAdd      = 0x6B
+	vkSubtract = 0x6D
+	vkDecimal  = 0x6E
+	vkDivide   = 0x6F
 )
 
 // VKToName maps a Windows virtual-key code to its platform-independent
@@ -104,10 +111,15 @@ var NameToVK = map[Name]uint32{
 	Period:       vkOEMPeriod,
 	Slash:        vkOEM2,
 	Grave:        vkOEM3,
+
+	NumPadMultiply: vkMultiply,
+	NumPadAdd:      vkAdd,
+	NumPadSubtract: vkSubtract,
+	NumPadDivide:   vkDivide,
 }
 
 func init() {
-	VKToName = make(map[uint32]Name, len(NameToVK)+3)
+	VKToName = make(map[uint32]Name, len(NameToVK)+14)
 	for name, vk := range NameToVK {
 		VKToName[vk] = name
 	}
@@ -116,4 +128,31 @@ func init() {
 	VKToName[vkShift] = ShiftLeft
 	VKToName[vkControl] = ControlLeft
 	VKToName[vkMenu] = AltLeft
+
+	// The numeric keypad's digit/decimal keys are the SAME physical keys
+	// as the navigation cluster (Home/End/arrows/.../Delete): which VK
+	// Windows reports for a given keypress depends on the sender's
+	// NumLock toggle state at the time, resolved before this hook ever
+	// sees it. But a receiving app's translation of VK_NUMPAD0-9/
+	// VK_DECIMAL into an actual character *additionally* requires
+	// NumLock to be on wherever that translation happens - i.e. on the
+	// target, regardless of what the source's NumLock was. Rather than
+	// have inject force the target's NumLock on/off to match (a global,
+	// persistent side effect on that machine), forward these as the
+	// same names as the top-row digits/period: functionally identical
+	// for every normal use of a keyboard, and injecting N0-N9/Period
+	// never depends on NumLock at all. NumPadAdd/Subtract/Multiply/
+	// Divide have no such alternate meaning, so those stay distinct
+	// (see NameToVK above).
+	VKToName[vkNumpad0] = N0
+	VKToName[vkNumpad0+1] = N1
+	VKToName[vkNumpad0+2] = N2
+	VKToName[vkNumpad0+3] = N3
+	VKToName[vkNumpad0+4] = N4
+	VKToName[vkNumpad0+5] = N5
+	VKToName[vkNumpad0+6] = N6
+	VKToName[vkNumpad0+7] = N7
+	VKToName[vkNumpad0+8] = N8
+	VKToName[vkNumpad0+9] = N9
+	VKToName[vkDecimal] = Period
 }

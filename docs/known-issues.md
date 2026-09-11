@@ -149,6 +149,105 @@ picked up by the build. If it's ever lost/regenerated, re-run the
 produces no compile error and no crash a user can see, just a silently
 swallowed goroutine failure logged to a file most people never open.
 
+## Numeric keypad (right-side numpad) keys weren't forwarded at all
+
+**Symptom**: the target machine ignored the numeric keypad entirely -
+neither the digits nor `+ - * /` on the right-side numpad did anything,
+even though the same physical keys work fine typed on the target
+directly. The number row above the letters worked normally.
+
+**Cause**: the numpad digits/operators have their own Windows virtual-key
+codes (`VK_NUMPAD0`-`VK_NUMPAD9` = `0x60`-`0x69`, `VK_MULTIPLY`,
+`VK_ADD`, `VK_SUBTRACT`, `VK_DECIMAL`, `VK_DIVIDE`), completely separate
+from the top-row digit keys (`0x30`-`0x39`) and from `Slash`/OEM
+punctuation. `internal/keys` (the OS-independent name set shared by
+`capture`/`inject`) never defined names or VK/keycode mappings for them,
+so `keyboardProc` in `internal/capture/capture_windows.go` saw
+`known == false` for every numpad key and silently dropped the event
+instead of forwarding it (while still suppressing it locally once
+engaged - so it didn't leak through to the controller machine either).
+
+**Fix, attempt 1**: added `NumPad0`-`NumPad9`, `NumPadAdd`,
+`NumPadSubtract`, `NumPadMultiply`, `NumPadDivide`, `NumPadDecimal` to
+`internal/keys/keys.go`, with Windows VK mappings in
+`internal/keys/keys_windows.go` and Linux evdev keycode mappings in
+`internal/keys/keys_linux.go`. NumPad Enter was already fine - Windows
+reports it with the same `VK_RETURN` as the main Enter key, so it was
+already covered by the existing `Enter` mapping.
+
+This forwarded the keys, but the digits/decimal still didn't show up as
+characters on the target - see the next entry.
+
+**Fix, attempt 2 (the one that stuck)**: the digit/decimal VKs
+(`VK_NUMPAD0`-`9`, `VK_DECIMAL`) turned out to need special handling
+beyond just forwarding them - see "Numpad digits forwarded correctly but
+still didn't type anything" below. `NumPad0`-`9`/`NumPadDecimal` were
+removed again; the digits/decimal are now folded into the ordinary
+`N0`-`N9`/`Period` names at the capture layer instead (see that entry).
+`NumPadAdd`/`Subtract`/`Multiply`/`Divide` stayed as-is from attempt 1 -
+they have no such ambiguity and needed no further work.
+
+**Lesson**: `known-issues.md` aside, `internal/keys/keys.go`'s constant
+list is the actual source of truth for "which keys this tool can
+forward at all" - a key missing from that file is silently dropped, not
+a build error, so it's easy to miss until someone notices a whole class
+of keys doing nothing.
+
+## Numpad digits forwarded correctly but still didn't type anything
+
+**Symptom**: after the fix above, the numpad's `+ - * /` worked
+immediately, but the digits and decimal point still produced nothing on
+the target - even though the wire event was confirmed arriving and
+`SendInput` was being called with the right `VK_NUMPAD*`/`VK_DECIMAL`
+code. Toggling NumLock on the *controller* correctly switched local
+capture between digit VKs and navigation VKs (Home/End/arrows/etc, which
+worked fine already), but with NumLock on and genuine digit VKs being
+sent, the target still typed nothing.
+
+**Cause**: on Windows, `VK_NUMPAD0`-`9`/`VK_DECIMAL` only translate to an
+actual character when NumLock is toggled **on wherever that translation
+happens** - i.e. on the target doing the injecting, regardless of what
+the source's NumLock was. `SendInput` with an explicit `wVk` doesn't
+route around this: it delivers the raw VK, and it's still up to the
+target's own keyboard-layout translation (`ToUnicode`/`TranslateMessage`
+in the receiving app) to turn `VK_NUMPAD7` into `'7'`, which it silently
+declines to do while the target's NumLock is off. This is also why tools
+like AutoHotkey explicitly toggle NumLock on before sending numpad
+digits and restore it after.
+
+**Fix considered but rejected**: have `target`'s injector check
+`GetKeyState(VK_NUMLOCK)` and synthesize a NumLock keypress to turn it on
+before injecting a digit/decimal. This does work, but leaves the
+target's NumLock permanently toggled on as a global, persistent side
+effect on that machine (its own keyboard/LED state changes even after
+the ea-share session ends), and does nothing to let the target ever go
+back to reflecting arrows if the controller's NumLock later toggles off
+- the two machines' NumLock states have no ongoing relationship, just a
+one-time forced flip.
+
+**Fix (actual)**: skip the whole NumLock problem by never forwarding a
+separate "NumPad digit" identity in the first place. `capture_windows.go`
+already receives the correctly-resolved VK from Windows (`VK_NUMPAD7` if
+the controller's NumLock is on, `VK_HOME` if it's off - Windows resolves
+this once, based on the controller's own NumLock, before the hook ever
+sees it). Since a numpad digit and the matching top-row digit are
+functionally identical for every normal use of a keyboard, `keys_windows.go`'s
+`VKToName` now maps `VK_NUMPAD0`-`9`/`VK_DECIMAL` directly to the same
+names as the top row (`N0`-`N9`, `Period`) instead of introducing
+distinct `NumPad*` names. Injecting `N7` never depends on NumLock at all,
+so the target needs no NumLock awareness whatsoever. Applied the same
+fold on the Linux side (`keys_linux.go`) for consistency, even though it
+wasn't separately confirmed broken there.
+
+**Lesson**: an injected VK on Windows isn't guaranteed to produce the
+character you'd expect from that VK - toggle-key-dependent VKs
+(NumLock/CapsLock/ScrollLock-sensitive ones) get reinterpreted using
+*whichever machine's* toggle state is active at translation time, not
+the state that produced the VK originally. When two VKs are functionally
+interchangeable for your purposes, prefer forwarding the
+toggle-independent one over trying to keep two machines' toggle-key
+states in sync.
+
 ## `tray.log` doesn't capture `ea-share-tray.exe`'s own crash
 
 **Status: identified, not yet fixed.**
