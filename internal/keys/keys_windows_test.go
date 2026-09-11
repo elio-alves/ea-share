@@ -51,3 +51,23 @@ func TestVKToNameGenericModifierAliases(t *testing.T) {
 		}
 	}
 }
+
+// TestVKToNameNumpadDigitsAliasTopRow checks that the numeric keypad's
+// digit/decimal VKs (VK_NUMPAD0-9, VK_DECIMAL) resolve to the same names
+// as the top-row digits/period instead of a separate "NumPad" identity -
+// see the comment in keys_windows.go's init() for why (a target's
+// character translation of these VKs depends on ITS OWN NumLock state,
+// not the source's, so forwarding them as ordinary digits sidesteps that
+// entirely instead of forcing the target's NumLock to match).
+func TestVKToNameNumpadDigitsAliasTopRow(t *testing.T) {
+	cases := map[uint32]Name{
+		0x60: N0, 0x61: N1, 0x62: N2, 0x63: N3, 0x64: N4,
+		0x65: N5, 0x66: N6, 0x67: N7, 0x68: N8, 0x69: N9,
+		0x6E: Period,
+	}
+	for vk, want := range cases {
+		if got, ok := VKToName[vk]; !ok || got != want {
+			t.Errorf("VKToName[0x%02X] = (%s, %v), want (%s, true)", vk, got, ok, want)
+		}
+	}
+}

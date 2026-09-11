@@ -28,9 +28,22 @@ func TestNameToKeycodeNoDuplicates(t *testing.T) {
 	}
 }
 
-func TestNameToKeycodeBijective(t *testing.T) {
-	if len(NameToKeycode) != len(KeycodeToName) {
-		t.Errorf("NameToKeycode has %d entries, KeycodeToName has %d - expected a strict bijection",
-			len(NameToKeycode), len(KeycodeToName))
+// TestKeycodeToNameNumpadDigitsAliasTopRow checks that the numeric
+// keypad's digit/decimal keycodes resolve to the same names as the
+// top-row digits/period instead of a separate "NumPad" identity - see
+// the comment in keys_linux.go's init() for why. This is also why
+// KeycodeToName is intentionally larger than NameToKeycode (no longer a
+// strict bijection): these are extra reverse-only aliases, same idea as
+// keys_windows.go's generic modifier aliases.
+func TestKeycodeToNameNumpadDigitsAliasTopRow(t *testing.T) {
+	cases := map[int]Name{
+		keyKp0: N0, keyKp1: N1, keyKp2: N2, keyKp3: N3, keyKp4: N4,
+		keyKp5: N5, keyKp6: N6, keyKp7: N7, keyKp8: N8, keyKp9: N9,
+		keyKpdot: Period,
+	}
+	for code, want := range cases {
+		if got, ok := KeycodeToName[code]; !ok || got != want {
+			t.Errorf("KeycodeToName[%d] = (%s, %v), want (%s, true)", code, got, ok, want)
+		}
 	}
 }
